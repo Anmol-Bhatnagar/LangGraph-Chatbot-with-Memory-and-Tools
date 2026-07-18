@@ -107,6 +107,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: s
                 "model": request.model,
                 "api_key": api_key,
                 "limit": request.limit,
+                "max_chars": request.max_chars,
                 "conversation_id": conversation_id,
                 "global_memory_frequency": request.global_memory_frequency
             }
@@ -217,6 +218,7 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
                     "model": request.model,
                     "api_key": api_key,
                     "limit": request.limit,
+                    "max_chars": request.max_chars,
                     "conversation_id": conversation_id,
                     "global_memory_frequency": request.global_memory_frequency
                 }

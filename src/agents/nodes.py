@@ -480,21 +480,33 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
     return {}
 
 def trim_history_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
-    """Trim short-term history when it exceeds the configured limit, extracting highlights first."""
+    """Trim short-term history when it exceeds the configured limits, extracting highlights first."""
     configurable = config.get("configurable", {})
     provider = configurable.get("provider", "google")
     model_name = configurable.get("model", "gemini-2.5-flash")
     api_key = configurable.get("api_key", "")
     user_id = state.get("user_id", "default_user")
-    limit = configurable.get("limit", 6)
     
     messages = state["messages"]
+    pruned_messages = []
     
-    if len(messages) <= limit:
-        return {}
-        
-    num_to_prune = len(messages) - limit
-    pruned_messages = messages[:num_to_prune]
+    # Support both character limit and message limit
+    if "max_chars" in configurable:
+        max_chars = configurable.get("max_chars", 1000)
+        def get_total_chars(msgs):
+            return sum(len(m.content) if m.content else 0 for m in msgs)
+        total_chars = get_total_chars(messages)
+        if total_chars > max_chars:
+            temp_msgs = list(messages)
+            while get_total_chars(temp_msgs) > max_chars and len(temp_msgs) > 0:
+                pruned_messages.append(temp_msgs.pop(0))
+    elif "limit" in configurable:
+        limit = configurable.get("limit", 6)
+        if len(messages) > limit:
+            num_to_prune = len(messages) - limit
+            pruned_messages = messages[:num_to_prune]
+            
+    num_to_prune = len(pruned_messages)
     
     if pruned_messages:
         logger.info(f"Trimming short term memory: pruning {num_to_prune} messages.")
