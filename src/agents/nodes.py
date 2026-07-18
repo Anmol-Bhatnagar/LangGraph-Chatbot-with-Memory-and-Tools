@@ -34,7 +34,7 @@ class MemoryAction(BaseModel):
         ...,
         description="Type of action: 'ADD' (new memory), 'UPDATE' (replace/update a conflicting memory), 'NO_OP' (duplicate or irrelevant fact), 'ASK_CLARIFICATION' (conflict requiring user confirmation)"
     )
-    fact: str = Field(..., description="The fact or preference statement to store.")
+    fact: Optional[str] = Field("", description="The fact or preference statement to store.")
     existing_memory_id: Optional[str] = Field(
         None,
         description="The ID of the conflicting or existing memory to update/clarify."

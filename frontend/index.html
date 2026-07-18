@@ -70,11 +70,28 @@
                     <input type="text" id="session-id-input" value="default_user">
                 </div>
                 <div class="setting-group">
-                    <div class="slider-row">
-                        <label>Short-Term Limit</label>
-                        <span id="memory-limit-val" class="limit-badge">6</span>
+                    <label>Short-Term Chars Limit
+                        <span class="setting-hint">Characters kept in active history before trimming</span>
+                    </label>
+                    <div class="number-input-row">
+                        <input type="number" id="max-chars-input" min="200" max="10000" step="100" value="1000">
+                        <span class="input-unit">chars</span>
                     </div>
-                    <input type="range" id="memory-limit-slider" min="4" max="20" value="6" step="2">
+                </div>
+                <div class="setting-group">
+                    <label>Global Memory Update Cycle
+                        <span class="setting-hint">Promote to global every N user messages</span>
+                    </label>
+                    <div class="number-input-row">
+                        <input type="number" id="global-freq-input" min="1" max="50" step="1" value="5">
+                        <span class="input-unit">msgs</span>
+                    </div>
+                </div>
+                <div class="settings-save-row">
+                    <span class="unsaved-badge" id="unsaved-badge">Unsaved changes</span>
+                    <button class="save-settings-btn" id="save-settings-btn">
+                        <i class="fa-solid fa-floppy-disk"></i> Save Settings
+                    </button>
                 </div>
             </div>
 

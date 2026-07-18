@@ -16,13 +16,16 @@ const PROVIDER_MODELS = {
   ]
 };
 
-let activeSession  = 'default_user';
-let activeConversationId = 'default_conversation';
-let activeProvider  = 'google';
-let activeModel     = 'gemini-2.0-flash';
-let activeLimit     = 6;
-let isBackendOnline = false;
-let serverConfig    = { google: false, groq: false };
+let activeSession         = 'default_user';
+let activeConversationId  = 'default_conversation';
+let activeProvider        = 'google';
+let activeModel           = 'gemini-2.0-flash';
+let activeLimit           = 6;         // legacy (kept for API compat)
+let activeMaxChars        = 1000;      // short-term character limit
+let activeGlobalFreq      = 5;         // global memory update cycle (N messages)
+let settingsUnsaved       = false;     // tracks pending save
+let isBackendOnline       = false;
+let serverConfig          = { google: false, groq: false };
 
 // DOM refs
 const providerSelect     = document.getElementById('provider-select');
@@ -30,8 +33,10 @@ const modelSelect        = document.getElementById('model-select');
 const apiKeyInput        = document.getElementById('api-key-input');
 const apiKeyStatus       = document.getElementById('api-key-status');
 const sessionIdInput     = document.getElementById('session-id-input');
-const memoryLimitSlider  = document.getElementById('memory-limit-slider');
-const memoryLimitVal     = document.getElementById('memory-limit-val');
+const maxCharsInput      = document.getElementById('max-chars-input');
+const globalFreqInput    = document.getElementById('global-freq-input');
+const saveSettingsBtn    = document.getElementById('save-settings-btn');
+const unsavedBadge       = document.getElementById('unsaved-badge');
 const clearChatBtn       = document.getElementById('clear-chat-btn');
 const clearDbBtn         = document.getElementById('clear-db-btn');
 const backendStatus      = document.getElementById('backend-status');
@@ -96,12 +101,36 @@ function initListeners() {
     }
   });
 
-  // Limit slider
-  memoryLimitSlider.addEventListener('input', e => {
-    activeLimit = parseInt(e.target.value);
-    memoryLimitVal.textContent = activeLimit;
+  // Max chars input — mark unsaved
+  maxCharsInput.addEventListener('input', () => markUnsaved());
+
+  // Global freq input — mark unsaved
+  globalFreqInput.addEventListener('input', () => markUnsaved());
+
+  // Save Settings button
+  saveSettingsBtn.addEventListener('click', () => {
+    const chars = parseInt(maxCharsInput.value);
+    const freq  = parseInt(globalFreqInput.value);
+    if (isNaN(chars) || chars < 200) { showToast('⚠️ Min chars limit is 200'); maxCharsInput.focus(); return; }
+    if (isNaN(freq)  || freq  < 1)   { showToast('⚠️ Min cycle is 1 message'); globalFreqInput.focus(); return; }
+    activeMaxChars   = chars;
+    activeGlobalFreq = freq;
+    saveSettings();
+    clearUnsaved();
+    // Briefly show saved state
+    saveSettingsBtn.classList.add('saved');
+    saveSettingsBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved!';
+    setTimeout(() => {
+      saveSettingsBtn.classList.remove('saved');
+      saveSettingsBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Settings';
+    }, 2000);
+    showToast('Settings saved!');
   });
-  memoryLimitSlider.addEventListener('change', () => saveSettings());
+
+  // Warn before browser tab close if unsaved
+  window.addEventListener('beforeunload', e => {
+    if (settingsUnsaved) { e.preventDefault(); e.returnValue = ''; }
+  });
 
   // Clear Chat
   clearChatBtn.addEventListener('click', async () => {
@@ -198,9 +227,31 @@ function initListeners() {
 }
 
 // ==========================================================================
-// 4. View Switching
+// 4. Unsaved Settings Helpers
+// ==========================================================================
+function markUnsaved() {
+  settingsUnsaved = true;
+  unsavedBadge.classList.add('visible');
+}
+function clearUnsaved() {
+  settingsUnsaved = false;
+  unsavedBadge.classList.remove('visible');
+}
+
+// ==========================================================================
+// 5. View Switching
 // ==========================================================================
 function switchView(view) {
+  // Guard: warn if there are unsaved settings changes
+  if (settingsUnsaved) {
+    const ok = confirm('You have unsaved settings changes. Leave without saving?');
+    if (!ok) return;
+    // User chose to discard — restore saved values
+    maxCharsInput.value  = activeMaxChars;
+    globalFreqInput.value = activeGlobalFreq;
+    clearUnsaved();
+  }
+
   // Nav items
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const navTarget = document.querySelector(`.nav-item[data-view="${view}"]`);
@@ -271,28 +322,33 @@ function updateBackendUI(online) {
 }
 
 function loadSettings() {
-  activeSession  = localStorage.getItem('s_session') || 'default_user';
-  activeConversationId = localStorage.getItem('s_conv_id') || 'default_conversation';
-  activeProvider  = localStorage.getItem('s_provider') || 'google';
-  activeModel     = localStorage.getItem('s_model') || 'gemini-2.0-flash';
-  activeLimit     = parseInt(localStorage.getItem('s_limit') || '6');
-  const key       = localStorage.getItem(`s_key_${activeProvider}`) || '';
+  activeSession        = localStorage.getItem('s_session')     || 'default_user';
+  activeConversationId = localStorage.getItem('s_conv_id')     || 'default_conversation';
+  activeProvider       = localStorage.getItem('s_provider')    || 'google';
+  activeModel          = localStorage.getItem('s_model')       || 'gemini-2.0-flash';
+  activeLimit          = parseInt(localStorage.getItem('s_limit')      || '6');
+  activeMaxChars       = parseInt(localStorage.getItem('s_max_chars')  || '1000');
+  activeGlobalFreq     = parseInt(localStorage.getItem('s_global_freq')|| '5');
+  const key            = localStorage.getItem(`s_key_${activeProvider}`) || '';
 
-  sessionIdInput.value = activeSession;
+  sessionIdInput.value   = activeSession;
   activeSessionName.textContent = activeSession;
-  providerSelect.value = activeProvider;
-  apiKeyInput.value = key;
-  memoryLimitSlider.value = activeLimit;
-  memoryLimitVal.textContent = activeLimit;
+  providerSelect.value   = activeProvider;
+  apiKeyInput.value      = key;
+  maxCharsInput.value    = activeMaxChars;
+  globalFreqInput.value  = activeGlobalFreq;
   updateApiKeyPlaceholder();
+  clearUnsaved();
 }
 
 function saveSettings() {
-  localStorage.setItem('s_session', activeSession);
-  localStorage.setItem('s_conv_id', activeConversationId);
-  localStorage.setItem('s_provider', activeProvider);
-  localStorage.setItem('s_model', activeModel);
-  localStorage.setItem('s_limit', activeLimit);
+  localStorage.setItem('s_session',     activeSession);
+  localStorage.setItem('s_conv_id',     activeConversationId);
+  localStorage.setItem('s_provider',    activeProvider);
+  localStorage.setItem('s_model',       activeModel);
+  localStorage.setItem('s_limit',       activeLimit);
+  localStorage.setItem('s_max_chars',   activeMaxChars);
+  localStorage.setItem('s_global_freq', activeGlobalFreq);
   localStorage.setItem(`s_key_${activeProvider}`, apiKeyInput.value.trim());
 }
 
@@ -533,7 +589,9 @@ async function sendMessage() {
     provider: activeProvider,
     model: activeModel,
     api_key: apiKey,
-    limit: activeLimit
+    limit: activeLimit,
+    max_chars: activeMaxChars,
+    global_memory_frequency: activeGlobalFreq
   };
 
   try {
