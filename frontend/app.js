@@ -5,7 +5,7 @@ const BASE_URL = window.location.origin; // Same origin (port 8000)
 
 const PROVIDER_MODELS = {
     google: [
-        { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash (Recommended)' },
+        { value: 'gemini-2.0-flash', label: 'gemini-2.0-flash (Recommended)' },
         { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
         { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' }
     ],
@@ -18,7 +18,7 @@ const PROVIDER_MODELS = {
 
 let activeSession = 'default_user';
 let activeProvider = 'google';
-let activeModel = 'gemini-2.5-flash';
+let activeModel = 'gemini-2.0-flash';
 let activeLimit = 6;
 let isBackendOnline = false;
 let serverConfig = { google: false, groq: false };
@@ -480,17 +480,24 @@ async function sendMessage() {
     // Render User message instantly
     renderMessage('user', text);
 
-    // Create spinner bubble for thinking state
-    const spinnerWrapper = document.createElement('div');
-    spinnerWrapper.className = 'message-wrapper assistant';
-    spinnerWrapper.id = 'chat-thinking-spinner';
-    spinnerWrapper.innerHTML = `
-        <div class="avatar"><i class="fa-solid fa-robot"></i></div>
-        <div class="message-bubble" style="opacity: 0.6;">
-            <i class="fa-solid fa-circle-notch fa-spin"></i> Agent is thinking...
-        </div>
-    `;
-    chatMessagesContainer.appendChild(spinnerWrapper);
+    // Hide welcome card if present
+    welcomeMessageCard.style.display = 'none';
+
+    // Create assistant message bubble with loading spinner
+    const wrapper = document.createElement('div');
+    wrapper.className = 'message-wrapper assistant';
+    
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.innerHTML = '<i class="fa-solid fa-robot"></i>';
+    
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    bubble.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
+    
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(bubble);
+    chatMessagesContainer.appendChild(wrapper);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
     // Request payload
@@ -504,7 +511,7 @@ async function sendMessage() {
     };
 
     try {
-        const res = await fetch(`${BASE_URL}/api/v1/chat`, {
+        const res = await fetch(`${BASE_URL}/api/v1/chat/stream`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -513,33 +520,62 @@ async function sendMessage() {
             body: JSON.stringify(payload)
         });
 
-        // Remove spinner
-        const spinner = document.getElementById('chat-thinking-spinner');
-        if (spinner) spinner.remove();
-
-        if (res.ok) {
-            const data = await res.json();
-            
-            // Render assistant reply
-            renderMessage('assistant', data.response);
-            
-            // Sync all lists from the response
-            renderActiveMessagesList(data.active_messages);
-            
-            // Re-fetch SQLite memories since node analyzer might have extracted something new
-            const memRes = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
-            if (memRes.ok) {
-                renderMemories(await memRes.json());
-            }
-        } else {
+        if (!res.ok) {
             const err = await res.json();
-            alert(`Error: ${err.detail || 'Could not send message.'}`);
+            bubble.textContent = `Error: ${err.detail || 'Could not stream response.'}`;
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamedText = '';
+        let spinnerRemoved = false;
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // save incomplete line
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.slice(6).trim();
+                    if (!dataStr) continue;
+
+                    const eventData = JSON.parse(dataStr);
+                    if (eventData.type === 'chunk') {
+                        if (!spinnerRemoved) {
+                            bubble.innerHTML = '';
+                            spinnerRemoved = true;
+                        }
+                        streamedText += eventData.content;
+                        bubble.textContent = streamedText;
+                        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+                    } else if (eventData.type === 'done') {
+                        // Sync active messages list
+                        renderActiveMessagesList(eventData.active_messages);
+
+                        // Re-fetch SQLite memories since node analyzer might have extracted something new
+                        const memRes = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
+                        if (memRes.ok) {
+                            renderMemories(await memRes.json());
+                        }
+                    } else if (eventData.type === 'error') {
+                        bubble.textContent = `Error: ${eventData.content}`;
+                    }
+                }
+            }
         }
     } catch (e) {
         console.error(e);
-        const spinner = document.getElementById('chat-thinking-spinner');
-        if (spinner) spinner.remove();
-        alert('Failed to connect to backend server.');
+        if (bubble.innerHTML.includes('fa-spin')) {
+            bubble.textContent = 'Failed to connect to backend server.';
+        } else {
+            bubble.textContent += '\n[Connection lost]';
+        }
     } finally {
         chatTextarea.disabled = false;
         sendMsgBtn.disabled = false;

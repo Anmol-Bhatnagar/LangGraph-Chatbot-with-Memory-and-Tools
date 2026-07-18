@@ -5,7 +5,7 @@ class ChatRequest(BaseModel):
     user_id: str = Field("default_user", description="Unique identifier for the user profile.")
     message: str = Field(..., description="Message string sent by the user.")
     provider: str = Field("google", description="LLM provider: 'google' (Gemini) or 'groq'.")
-    model: str = Field("gemini-2.5-flash", description="Model name to run in the backend.")
+    model: str = Field("gemini-2.0-flash", description="Model name to run in the backend.")
     api_key: Optional[str] = Field(default=None, description="API key for the selected provider. If not provided, fallback to server environment variables.")
     limit: int = Field(6, description="Short-term message limit before trimming.")
 
