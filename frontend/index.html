@@ -197,18 +197,72 @@
 
             <!-- Memories View -->
             <div class="view-panel" id="view-memories">
-                <div class="panel-container">
-                    <div class="panel-header">
-                        <h2><i class="fa-solid fa-database"></i> Long-Term Memories</h2>
-                        <p class="panel-sub">Facts extracted by the LLM and persisted to SQLite. Injected into the system prompt on each turn.</p>
+                <div class="memories-layout">
+
+                    <!-- SECTION 1: Conversation Memory -->
+                    <div class="mem-section">
+                        <div class="mem-section-header">
+                            <div class="mem-section-icon blue"><i class="fa-solid fa-comments"></i></div>
+                            <div>
+                                <h3 class="mem-section-title">Conversation Memory</h3>
+                                <p class="mem-section-sub">Short-term history &amp; long-term highlights for the selected conversation.</p>
+                            </div>
+                        </div>
+
+                        <!-- Conversation Selector -->
+                        <div class="mem-conv-selector">
+                            <label class="mem-label"><i class="fa-regular fa-comment"></i> Select Conversation</label>
+                            <select id="mem-conv-select" class="mem-conv-dropdown">
+                                <option value="">— choose a conversation —</option>
+                            </select>
+                        </div>
+
+                        <!-- Short-Term Messages -->
+                        <div class="mem-subsection" id="conv-shortterm-section">
+                            <div class="mem-subsection-title">
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                                Short-Term History
+                                <span class="mem-count-badge" id="shortterm-count">0</span>
+                            </div>
+                            <div class="mem-items-list" id="conv-shortterm-list">
+                                <div class="empty-state"><i class="fa-regular fa-comments"></i> Select a conversation to view history.</div>
+                            </div>
+                        </div>
+
+                        <!-- Conversation Long-Term Memory -->
+                        <div class="mem-subsection" id="conv-longterm-section">
+                            <div class="mem-subsection-title">
+                                <i class="fa-solid fa-brain"></i>
+                                Conversation Long-Term Memory
+                                <span class="mem-count-badge purple" id="conv-longterm-count">0</span>
+                            </div>
+                            <div class="mem-items-list" id="conv-longterm-list">
+                                <div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No conversation memories yet.</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="memories-list" id="sqlite-memories-container">
-                        <div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No memories yet. Start chatting!</div>
+
+                    <!-- SECTION 2: Global Long-Term Memory -->
+                    <div class="mem-section">
+                        <div class="mem-section-header">
+                            <div class="mem-section-icon purple"><i class="fa-solid fa-database"></i></div>
+                            <div>
+                                <h3 class="mem-section-title">Global Long-Term Memory</h3>
+                                <p class="mem-section-sub">Shared facts &amp; preferences across all conversations.</p>
+                            </div>
+                        </div>
+
+                        <div class="mem-items-list" id="global-memories-list">
+                            <div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No global memories yet. Start chatting!</div>
+                        </div>
+
+                        <!-- Manual add row -->
+                        <div class="add-memory-row">
+                            <input type="text" id="manual-memory-input" placeholder="Add a fact to global memory manually...">
+                            <button class="send-circle small" id="save-manual-memory-btn"><i class="fa-solid fa-plus"></i></button>
+                        </div>
                     </div>
-                    <div class="add-memory-row">
-                        <input type="text" id="manual-memory-input" placeholder="Add a fact manually...">
-                        <button class="send-circle small" id="save-manual-memory-btn"><i class="fa-solid fa-plus"></i></button>
-                    </div>
+
                 </div>
             </div>
 

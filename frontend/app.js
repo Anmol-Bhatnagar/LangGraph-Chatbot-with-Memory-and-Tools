@@ -45,11 +45,16 @@ const chatContainer      = document.getElementById('chat-messages-container');
 const welcomeState       = document.getElementById('welcome-state');
 const chatTextarea       = document.getElementById('chat-textarea');
 const sendMsgBtn         = document.getElementById('send-msg-btn');
-const sqliteMemories     = document.getElementById('sqlite-memories-container');
-const manualMemInput     = document.getElementById('manual-memory-input');
-const saveMemBtn         = document.getElementById('save-manual-memory-btn');
-const activeMsgsCount    = document.getElementById('active-msgs-count');
-const activeMsgsList     = document.getElementById('active-messages-container');
+const globalMemsList      = document.getElementById('global-memories-list');
+const convShorttermList   = document.getElementById('conv-shortterm-list');
+const convLongtermList    = document.getElementById('conv-longterm-list');
+const shorttermCount      = document.getElementById('shortterm-count');
+const convLongtermCount   = document.getElementById('conv-longterm-count');
+const memConvSelect       = document.getElementById('mem-conv-select');
+const manualMemInput      = document.getElementById('manual-memory-input');
+const saveMemBtn          = document.getElementById('save-manual-memory-btn');
+const activeMsgsCount     = document.getElementById('active-msgs-count');
+const activeMsgsList      = document.getElementById('active-messages-container');
 const topbarModelName    = document.getElementById('topbar-model-name');
 const featureCards       = document.getElementById('feature-cards');
 
@@ -174,14 +179,33 @@ function initListeners() {
     }
   });
 
-  // Sidebar nav
+  // Sidebar nav — wire up memories dropdown on show
   document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-    item.addEventListener('click', () => switchView(item.dataset.view));
+    item.addEventListener('click', () => {
+      const view = item.dataset.view;
+      if (view === 'memories') populateMemConvDropdown();
+      switchView(view);
+    });
   });
 
-  // Feature cards
+  // Feature cards — also populate dropdown if navigating to memories
   document.querySelectorAll('.feature-card[data-view]').forEach(card => {
-    card.addEventListener('click', () => switchView(card.dataset.view));
+    card.addEventListener('click', () => {
+      const view = card.dataset.view;
+      if (view === 'memories') populateMemConvDropdown();
+      switchView(view);
+    });
+  });
+
+  // Conversation dropdown in memories panel
+  memConvSelect.addEventListener('change', async () => {
+    const convId = memConvSelect.value;
+    if (!convId) {
+      renderConvShortTerm([]);
+      renderConvLongTerm([]);
+      return;
+    }
+    await loadConvMemories(convId);
   });
 
   // Quick chips
@@ -389,33 +413,105 @@ function showToast(text) {
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = '0.3s'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
-function renderMemories(mems) {
-  sqliteMemories.innerHTML = '';
+function renderGlobalMemories(mems) {
+  globalMemsList.innerHTML = '';
   if (!mems || !mems.length) {
-    sqliteMemories.innerHTML = '<div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No memories yet. Start chatting!</div>';
+    globalMemsList.innerHTML = '<div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No global memories yet. Start chatting!</div>';
     return;
   }
   mems.forEach(m => {
     const card = document.createElement('div');
     card.className = 'mem-card';
     card.innerHTML = `
-      <div>
+      <div style="flex:1">
         <div class="mem-text">${m.content}</div>
-        <div class="mem-ts">ID: ${m.id} · ${m.created_at}</div>
+        <div class="mem-ts">ID: ${m.id.substring(0,8)} · ${m.created_at ? new Date(m.created_at).toLocaleString() : ''}</div>
       </div>
     `;
     const del = document.createElement('button');
     del.className = 'mem-del';
     del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
     del.onclick = async () => {
-      if (confirm('Delete this memory?') && await apiDeleteMemory(m.id)) {
+      if (confirm('Delete this global memory?') && await apiDeleteMemory(m.id)) {
         showToast('Deleted.');
-        syncSessionData();
+        const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
+        if (r.ok) renderGlobalMemories(await r.json());
       }
     };
     card.appendChild(del);
-    sqliteMemories.appendChild(card);
+    globalMemsList.appendChild(card);
   });
+}
+
+function renderConvShortTerm(msgs) {
+  convShorttermList.innerHTML = '';
+  shorttermCount.textContent = msgs.length;
+  if (!msgs.length) {
+    convShorttermList.innerHTML = '<div class="empty-state"><i class="fa-regular fa-comments"></i> No active messages in this conversation.</div>';
+    return;
+  }
+  msgs.forEach(m => {
+    const chip = document.createElement('div');
+    const isUser = m.role === 'user';
+    chip.className = `stm-chip ${isUser ? 'user' : 'assistant'}`;
+    chip.innerHTML = `
+      <span class="stm-role">${isUser ? 'You' : 'AI'}</span>
+      <span class="stm-content">${m.content}</span>
+    `;
+    convShorttermList.appendChild(chip);
+  });
+}
+
+function renderConvLongTerm(mems) {
+  convLongtermList.innerHTML = '';
+  convLongtermCount.textContent = mems.length;
+  if (!mems.length) {
+    convLongtermList.innerHTML = '<div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No conversation memories yet.</div>';
+    return;
+  }
+  mems.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'mem-card';
+    card.style.borderLeftColor = 'var(--blue)';
+    card.innerHTML = `
+      <div style="flex:1">
+        <div class="mem-text">${m.content}</div>
+        <div class="mem-ts">ID: ${m.id.substring(0,8)} · ${m.created_at ? new Date(m.created_at).toLocaleString() : ''}</div>
+      </div>
+    `;
+    convLongtermList.appendChild(card);
+  });
+}
+
+async function populateMemConvDropdown() {
+  if (!isBackendOnline) return;
+  try {
+    const r = await fetch(`${BASE_URL}/api/v1/conversations/${activeSession}`);
+    if (!r.ok) return;
+    const convs = await r.json();
+    memConvSelect.innerHTML = '<option value="">\u2014 choose a conversation \u2014</option>';
+    convs.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.title;
+      if (c.id === activeConversationId) opt.selected = true;
+      memConvSelect.appendChild(opt);
+    });
+    // Auto-load active conversation
+    if (activeConversationId) await loadConvMemories(activeConversationId);
+  } catch(e) { console.error(e); }
+}
+
+async function loadConvMemories(convId) {
+  if (!convId || !isBackendOnline) return;
+  try {
+    const [shortR, longR] = await Promise.all([
+      fetch(`${BASE_URL}/api/v1/chat/${activeSession}?conversation_id=${convId}`),
+      fetch(`${BASE_URL}/api/v1/memories/${activeSession}/conversation/${convId}`)
+    ]);
+    if (shortR.ok) renderConvShortTerm(await shortR.json());
+    if (longR.ok)  renderConvLongTerm(await longR.json());
+  } catch(e) { console.error(e); }
 }
 
 function renderActiveMsgs(msgs) {
@@ -539,11 +635,14 @@ async function syncConfig() {
 
 async function syncSessionData() {
   if (!isBackendOnline) return;
+
+  // Load global long-term memories
   try {
     const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
-    if (r.ok) renderMemories(await r.json());
+    if (r.ok) renderGlobalMemories(await r.json());
   } catch(e) { console.error(e); }
 
+  // Load active conversation short-term messages (for chat view)
   try {
     const r = await fetch(`${BASE_URL}/api/v1/chat/${activeSession}?conversation_id=${activeConversationId}`);
     if (r.ok) {
@@ -632,8 +731,11 @@ async function sendMessage() {
         } else if (ev.type === 'done') {
           renderActiveMsgs(ev.active_messages);
           const memR = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
-          if (memR.ok) renderMemories(await memR.json());
+          if (memR.ok) renderGlobalMemories(await memR.json());
           await loadConversations();
+          // If memories panel is visible, also refresh conversation memories
+          const convId = memConvSelect.value;
+          if (convId) await loadConvMemories(convId);
         } else if (ev.type === 'error') {
           bubble.textContent = `Error: ${ev.content}`;
         }
