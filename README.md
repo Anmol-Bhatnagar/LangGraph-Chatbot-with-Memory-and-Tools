@@ -29,7 +29,7 @@ cp .env.example .env
 
 ### Start FastAPI Backend
 ```bash
-..\.venv\bin\python.exe -m uvicorn src.main:app --reload --port 8000
+..\.venv\bin\python.exe -m uvicorn src.app:app --reload --port 8000
 ```
 Swagger UI docs will be available at `http://localhost:8000/docs`.
 
