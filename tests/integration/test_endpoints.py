@@ -78,3 +78,77 @@ class TestAPIEndpoints(unittest.TestCase):
         res = self.client.get(f"/api/v1/chat/{self.user_id}")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(len(res.json()), 0)
+
+    @patch("src.agents.nodes.get_llm", return_value=mock_llm)
+    def test_conversation_isolation_and_shared_memories(self, mock_llm_patch):
+        # 1. Create two conversations
+        conv1_payload = {"user_id": self.user_id, "title": "Conv A"}
+        res = self.client.post(f"/api/v1/conversations/{self.user_id}?title=Conv+A")
+        self.assertEqual(res.status_code, 200)
+        conv1_id = res.json()["id"]
+
+        res = self.client.post(f"/api/v1/conversations/{self.user_id}?title=Conv+B")
+        self.assertEqual(res.status_code, 200)
+        conv2_id = res.json()["id"]
+
+        # Verify both conversations are listed
+        res = self.client.get(f"/api/v1/conversations/{self.user_id}")
+        self.assertEqual(res.status_code, 200)
+        conversations = res.json()
+        self.assertTrue(any(c["id"] == conv1_id for c in conversations))
+        self.assertTrue(any(c["id"] == conv2_id for c in conversations))
+
+        # 2. Send message in Conv A
+        chat_payload_a = {
+            "user_id": self.user_id,
+            "conversation_id": conv1_id,
+            "message": "This is message A",
+            "provider": "google",
+            "model": "gemini-2.5-flash",
+            "api_key": "mock_key"
+        }
+        res = self.client.post("/api/v1/chat", json=chat_payload_a)
+        self.assertEqual(res.status_code, 200)
+
+        # 3. Send message in Conv B
+        chat_payload_b = {
+            "user_id": self.user_id,
+            "conversation_id": conv2_id,
+            "message": "This is message B",
+            "provider": "google",
+            "model": "gemini-2.5-flash",
+            "api_key": "mock_key"
+        }
+        res = self.client.post("/api/v1/chat", json=chat_payload_b)
+        self.assertEqual(res.status_code, 200)
+
+        # 4. Verify short-term memory is isolated
+        # Conv A should only have message A
+        res = self.client.get(f"/api/v1/chat/{self.user_id}?conversation_id={conv1_id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()), 2)
+        self.assertEqual(res.json()[0]["content"], "This is message A")
+
+        # Conv B should only have message B
+        res = self.client.get(f"/api/v1/chat/{self.user_id}?conversation_id={conv2_id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()), 2)
+        self.assertEqual(res.json()[0]["content"], "This is message B")
+
+        # 5. Verify long-term memory is shared (same memory database list for the user)
+        res = self.client.get(f"/api/v1/memories/{self.user_id}")
+        self.assertEqual(res.status_code, 200)
+        # Both conversations trigger memory extraction, writing to the same user profile
+        self.assertTrue(len(res.json()) > 0)
+        
+        # 6. Delete Conv A
+        res = self.client.delete(f"/api/v1/conversations/{self.user_id}/{conv1_id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["success"])
+
+        # Check list again
+        res = self.client.get(f"/api/v1/conversations/{self.user_id}")
+        self.assertEqual(res.status_code, 200)
+        conversations = res.json()
+        self.assertFalse(any(c["id"] == conv1_id for c in conversations))
+        self.assertTrue(any(c["id"] == conv2_id for c in conversations))

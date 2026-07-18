@@ -84,11 +84,15 @@ def load_prompt_template(filename: str) -> str:
 # 4. Pure Business Logic Graph Nodes
 # ==========================================
 
-def load_memories_node(state: ChatState, config: RunnableConfig) -> dict:
-    """Retrieve long-term memories from SQLite and add to the graph state."""
+def load_memories_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
+    """Retrieve long-term memories from LangGraph store and add to the graph state."""
     user_id = state.get("user_id", "default_user")
-    memories_list = get_memories(user_id)
-    memories_text = [m["content"] for m in memories_list]
+    if store is not None:
+        memories_items = store.search((user_id,))
+        memories_text = [item.value["content"] for item in memories_items]
+    else:
+        memories_list = get_memories(user_id)
+        memories_text = [m["content"] for m in memories_list]
     return {"long_term_memories": memories_text}
 
 def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
@@ -139,8 +143,8 @@ def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
             
     return {"messages": [response]}
 
-def extract_memory_node(state: ChatState, config: RunnableConfig) -> dict:
-    """Use the LLM to decide what facts from the latest human-AI exchange to save to SQLite."""
+def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
+    """Use the LLM to decide what facts from the latest human-AI exchange to save to SQLite and LangGraph store."""
     configurable = config.get("configurable", {})
     provider = configurable.get("provider", "google")
     model_name = configurable.get("model", "gemini-2.5-flash")
@@ -196,11 +200,13 @@ def extract_memory_node(state: ChatState, config: RunnableConfig) -> dict:
     if extracted:
         new_facts = extracted.new_memories
         for fact in new_facts:
-            save_memory(user_id, fact)
+            memory_id = save_memory(user_id, fact)
+            if store is not None:
+                store.put((user_id,), str(memory_id), {"content": fact})
         
     return {}
 
-def trim_history_node(state: ChatState, config: RunnableConfig) -> dict:
+def trim_history_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
     """Trim short-term history when it exceeds the configured limit, extracting highlights first."""
     configurable = config.get("configurable", {})
     provider = configurable.get("provider", "google")
@@ -255,7 +261,10 @@ def trim_history_node(state: ChatState, config: RunnableConfig) -> dict:
         if extracted:
             knowledge_points = extracted.extracted_knowledge
             for point in knowledge_points:
-                save_memory(user_id, f"Summary highlight: {point}")
+                fact = f"Summary highlight: {point}"
+                memory_id = save_memory(user_id, fact)
+                if store is not None:
+                    store.put((user_id,), str(memory_id), {"content": fact})
             
         return {"messages": [RemoveMessage(id=msg.id) for msg in pruned_messages if msg.id]}
         

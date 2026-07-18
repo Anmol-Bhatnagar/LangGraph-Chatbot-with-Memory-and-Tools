@@ -14,7 +14,8 @@ from src.api.schemas.chat import (
     MessageSchema,
     MemoryRequest,
     MemorySchema,
-    GenericResponse
+    GenericResponse,
+    ConversationSchema
 )
 from src.agents.graph import chatbot_app, memory_app
 from src.services.memory import (
@@ -24,7 +25,11 @@ from src.services.memory import (
     get_memories,
     save_memory,
     delete_memory,
-    clear_all_memories
+    clear_all_memories,
+    get_conversations,
+    create_conversation,
+    delete_conversation,
+    touch_conversation
 )
 from src.api.dependencies.auth import verify_api_token
 
@@ -32,10 +37,10 @@ logger = logging.getLogger("ChatRouter")
 
 router = APIRouter(prefix="/api/v1")
 
-def run_background_memory_tasks(user_id: str, messages: list, config: dict):
+def run_background_memory_tasks(user_id: str, messages: list, config: dict, conversation_id: str = "default_conversation"):
     """Run memory extraction and history trimming in the background, updating SQLite."""
     try:
-        logger.info(f"Starting background memory extraction/trimming for user '{user_id}'...")
+        logger.info(f"Starting background memory extraction/trimming for user '{user_id}' in conv '{conversation_id}'...")
         result = memory_app.invoke(
             {
                 "messages": messages,
@@ -45,8 +50,8 @@ def run_background_memory_tasks(user_id: str, messages: list, config: dict):
         )
         # Save pruned history to SQLite if anything was changed/removed
         updated_messages = result.get("messages", [])
-        save_chat_history(user_id, updated_messages)
-        logger.info(f"Completed background memory extraction/trimming for user '{user_id}'.")
+        save_chat_history(user_id, updated_messages, conversation_id=conversation_id)
+        logger.info(f"Completed background memory extraction/trimming for user '{user_id}' in conv '{conversation_id}'.")
     except Exception as e:
         logger.error(f"Error in background memory tasks for user '{user_id}': {e}")
 
@@ -58,6 +63,7 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = D
     saves the updated history, and returns the response with current memory states.
     """
     user_id = request.user_id
+    conversation_id = request.conversation_id or "default_conversation"
     api_key = request.api_key.strip() if request.api_key else ""
     
     if not api_key:
@@ -73,8 +79,20 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = D
         )
         
     try:
+        # Auto-name conversation title if it is a default/generic title
+        convs = get_conversations(user_id)
+        current_title = "New Conversation"
+        for c in convs:
+            if c["id"] == conversation_id:
+                current_title = c["title"]
+                break
+        
+        if current_title in ("New Conversation", "Default Conversation"):
+            new_title = request.message[:30] + "..." if len(request.message) > 30 else request.message
+            touch_conversation(user_id, conversation_id, title=new_title)
+
         # 1. Load existing short-term messages from SQLite
-        messages = load_chat_history(user_id)
+        messages = load_chat_history(user_id, conversation_id=conversation_id)
         
         # 2. Append the new Human Message
         msg_id = str(uuid.uuid4())
@@ -105,7 +123,7 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = D
         updated_messages = result.get("messages", [])
         
         # 6. Save updated short-term message log to SQLite
-        save_chat_history(user_id, updated_messages)
+        save_chat_history(user_id, updated_messages, conversation_id=conversation_id)
         
         # 7. Extract the latest AI Message as the API reply
         ai_reply = ""
@@ -127,7 +145,8 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = D
             run_background_memory_tasks,
             user_id=user_id,
             messages=updated_messages,
-            config=config
+            config=config,
+            conversation_id=conversation_id
         )
         
         return ChatResponse(
@@ -151,6 +170,7 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
     saves the final history, and yields the final conversation metadata on completion.
     """
     user_id = request.user_id
+    conversation_id = request.conversation_id or "default_conversation"
     api_key = request.api_key.strip() if request.api_key else ""
     
     if not api_key:
@@ -167,8 +187,20 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
         
     async def event_generator():
         try:
+            # Auto-name conversation title if it is a default/generic title
+            convs = get_conversations(user_id)
+            current_title = "New Conversation"
+            for c in convs:
+                if c["id"] == conversation_id:
+                    current_title = c["title"]
+                    break
+            
+            if current_title in ("New Conversation", "Default Conversation"):
+                new_title = request.message[:30] + "..." if len(request.message) > 30 else request.message
+                touch_conversation(user_id, conversation_id, title=new_title)
+
             # 1. Load history
-            messages = load_chat_history(user_id)
+            messages = load_chat_history(user_id, conversation_id=conversation_id)
             
             # 2. Append new message
             msg_id = str(uuid.uuid4())
@@ -209,7 +241,7 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
             # 5. Save updated state and output metadata if execution succeeded
             if final_output:
                 updated_messages = final_output.get("messages", [])
-                save_chat_history(user_id, updated_messages)
+                save_chat_history(user_id, updated_messages, conversation_id=conversation_id)
                 
                 ai_reply = ""
                 for msg in reversed(updated_messages):
@@ -237,7 +269,8 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
                     run_background_memory_tasks,
                     user_id=user_id,
                     messages=updated_messages,
-                    config=config
+                    config=config,
+                    conversation_id=conversation_id
                 )
                         
                 yield f"data: {json.dumps({
@@ -273,6 +306,9 @@ def create_user_memory(user_id: str, request: MemoryRequest):
     """Manually add a memory fact for a user."""
     memory_id = save_memory(user_id, request.content)
     if memory_id > 0:
+        # Sync to LangGraph store
+        from src.agents.graph import store
+        store.put((user_id,), str(memory_id), {"content": request.content})
         return GenericResponse(
             success=True,
             message=f"Memory successfully stored with ID: {memory_id}"
@@ -287,6 +323,9 @@ def delete_user_memory(user_id: str, memory_id: int):
     """Delete a specific memory by its ID for a user."""
     success = delete_memory(user_id, memory_id)
     if success:
+        # Sync to LangGraph store
+        from src.agents.graph import store
+        store.delete((user_id,), str(memory_id))
         return GenericResponse(
             success=True,
             message=f"Memory {memory_id} successfully deleted."
@@ -301,6 +340,11 @@ def clear_user_memories(user_id: str):
     """Clear all long-term memories stored in SQLite for a user."""
     success = clear_all_memories(user_id)
     if success:
+        # Sync to LangGraph store
+        from src.agents.graph import store
+        items = store.search((user_id,))
+        for item in items:
+            store.delete((user_id,), item.key)
         return GenericResponse(
             success=True,
             message=f"All long-term memories for user '{user_id}' cleared successfully."
@@ -310,14 +354,49 @@ def clear_user_memories(user_id: str):
         detail="Failed to clear long-term memories."
     )
 
-@router.post("/chat/clear/{user_id}", response_model=GenericResponse, tags=["Chat"])
-def clear_user_chat_history(user_id: str):
-    """Clear the active conversation message history (short-term memory) for a user."""
-    success = clear_chat_history(user_id)
+# ==========================================
+# Conversation Endpoints
+# ==========================================
+
+@router.get("/conversations/{user_id}", response_model=List[ConversationSchema], tags=["Conversations"])
+def get_user_conversations(user_id: str):
+    """Retrieve all conversations for a user."""
+    return get_conversations(user_id)
+
+@router.post("/conversations/{user_id}", response_model=ConversationSchema, tags=["Conversations"])
+def create_user_conversation(user_id: str, title: str = "New Conversation"):
+    """Create a new conversation session for a user."""
+    conv_id = create_conversation(user_id, title=title)
+    # Return the created conversation details
+    return ConversationSchema(
+        id=conv_id,
+        title=title,
+        created_at="",
+        updated_at=""
+    )
+
+@router.delete("/conversations/{user_id}/{conversation_id}", response_model=GenericResponse, tags=["Conversations"])
+def delete_user_conversation(user_id: str, conversation_id: str):
+    """Delete a conversation session and all its messages."""
+    success = delete_conversation(user_id, conversation_id)
     if success:
         return GenericResponse(
             success=True,
-            message=f"Short-term chat history for user '{user_id}' cleared successfully."
+            message=f"Conversation '{conversation_id}' deleted successfully."
+        )
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Failed to delete conversation '{conversation_id}'."
+    )
+
+@router.post("/chat/clear/{user_id}", response_model=GenericResponse, tags=["Chat"])
+def clear_user_chat_history(user_id: str, conversation_id: str = "default_conversation"):
+    """Clear the active conversation message history (short-term memory) for a user."""
+    success = clear_chat_history(user_id, conversation_id=conversation_id)
+    if success:
+        return GenericResponse(
+            success=True,
+            message=f"Short-term chat history for user '{user_id}' and conv '{conversation_id}' cleared successfully."
         )
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -325,10 +404,10 @@ def clear_user_chat_history(user_id: str):
     )
 
 @router.get("/chat/{user_id}", response_model=List[MessageSchema], tags=["Chat"])
-def get_user_chat_history(user_id: str):
+def get_user_chat_history(user_id: str, conversation_id: str = "default_conversation"):
     """Retrieve the active conversation message history (short-term memory) for a user."""
     try:
-        messages = load_chat_history(user_id)
+        messages = load_chat_history(user_id, conversation_id=conversation_id)
         active_messages_response = []
         for msg in messages:
             if isinstance(msg, HumanMessage):

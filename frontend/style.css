@@ -137,6 +137,66 @@ body {
   font-weight: 600;
 }
 
+/* Conversations List & Items */
+.conversations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-top: 4px;
+}
+.conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+}
+.conversation-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.conversation-item.active {
+  background: var(--bg-hover);
+  color: var(--accent);
+  border-left: 2.5px solid var(--accent);
+  font-weight: 600;
+  padding-left: calc(0.75rem - 2.5px);
+}
+.conversation-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conversation-delete {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+  opacity: 0;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.conversation-item:hover .conversation-delete {
+  opacity: 1;
+}
+.conversation-delete:hover {
+  color: var(--red);
+}
+
 /* Sidebar Settings */
 .sidebar-settings {
   display: none;

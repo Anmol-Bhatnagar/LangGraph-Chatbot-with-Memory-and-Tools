@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     user_id: str = Field("default_user", description="Unique identifier for the user profile.")
+    conversation_id: Optional[str] = Field(default=None, description="Unique identifier for the conversation session.")
     message: str = Field(..., description="Message string sent by the user.")
     provider: str = Field("google", description="LLM provider: 'google' (Gemini) or 'groq'.")
     model: str = Field("gemini-2.0-flash", description="Model name to run in the backend.")
@@ -13,6 +14,12 @@ class MessageSchema(BaseModel):
     role: str
     content: str
     id: Optional[str] = None
+
+class ConversationSchema(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="Assistant's reply to the message.")

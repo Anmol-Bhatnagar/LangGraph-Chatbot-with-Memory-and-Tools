@@ -17,6 +17,7 @@ const PROVIDER_MODELS = {
 };
 
 let activeSession  = 'default_user';
+let activeConversationId = 'default_conversation';
 let activeProvider  = 'google';
 let activeModel     = 'gemini-2.0-flash';
 let activeLimit     = 6;
@@ -87,9 +88,11 @@ function initListeners() {
     if (v !== activeSession) {
       activeSession = v;
       activeSessionName.textContent = activeSession;
+      activeConversationId = 'default_conversation';
       saveSettings();
       syncSessionData();
-      showToast(`Switched to session: "${activeSession}"`);
+      loadConversations();
+      showToast(`Switched to user session: "${activeSession}"`);
     }
   });
 
@@ -176,11 +179,20 @@ function initListeners() {
 
   // New Chat btn
   document.getElementById('new-chat-btn').addEventListener('click', async () => {
-    if (await apiClearChat()) {
-      clearChatUI();
-      switchView('chat');
-      showToast('New chat started!');
-      syncSessionData();
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/conversations/${activeSession}?title=New+Conversation`, { method: 'POST' });
+      if (res.ok) {
+        const newConv = await res.json();
+        activeConversationId = newConv.id;
+        saveSettings();
+        clearChatUI();
+        switchView('chat');
+        showToast('New conversation started!');
+        await loadConversations();
+        await syncSessionData();
+      }
+    } catch (err) {
+      console.error(err);
     }
   });
 }
@@ -260,6 +272,7 @@ function updateBackendUI(online) {
 
 function loadSettings() {
   activeSession  = localStorage.getItem('s_session') || 'default_user';
+  activeConversationId = localStorage.getItem('s_conv_id') || 'default_conversation';
   activeProvider  = localStorage.getItem('s_provider') || 'google';
   activeModel     = localStorage.getItem('s_model') || 'gemini-2.0-flash';
   activeLimit     = parseInt(localStorage.getItem('s_limit') || '6');
@@ -276,6 +289,7 @@ function loadSettings() {
 
 function saveSettings() {
   localStorage.setItem('s_session', activeSession);
+  localStorage.setItem('s_conv_id', activeConversationId);
   localStorage.setItem('s_provider', activeProvider);
   localStorage.setItem('s_model', activeModel);
   localStorage.setItem('s_limit', activeLimit);
@@ -369,13 +383,93 @@ function renderActiveMsgs(msgs) {
   });
 }
 
+async function loadConversations() {
+  if (!isBackendOnline) return;
+  try {
+    const r = await fetch(`${BASE_URL}/api/v1/conversations/${activeSession}`);
+    if (r.ok) {
+      const convs = await r.json();
+      renderConversationsList(convs);
+    }
+  } catch(e) { console.error(e); }
+}
+
+function renderConversationsList(convs) {
+  const container = document.getElementById('conversations-list-container');
+  container.innerHTML = '';
+  if (!convs || !convs.length) {
+    container.innerHTML = '<div style="font-size:0.72rem; color:var(--text-dim); text-align:center; padding:10px 0;">No conversations</div>';
+    return;
+  }
+  convs.forEach(c => {
+    const item = document.createElement('div');
+    item.className = `conversation-item ${c.id === activeConversationId ? 'active' : ''}`;
+    item.setAttribute('data-id', c.id);
+    
+    // Bubble icon
+    const icon = document.createElement('i');
+    icon.className = 'fa-regular fa-comment';
+    item.appendChild(icon);
+    
+    // Title text
+    const title = document.createElement('span');
+    title.className = 'conversation-title';
+    title.textContent = c.title;
+    item.appendChild(title);
+    
+    // Delete button
+    const del = document.createElement('button');
+    del.className = 'conversation-delete';
+    del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
+    del.title = 'Delete Conversation';
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete conversation "${c.title}"?`)) return;
+      try {
+        const res = await fetch(`${BASE_URL}/api/v1/conversations/${activeSession}/${c.id}`, { method: 'DELETE' });
+        if (res.ok) {
+          showToast('Conversation deleted.');
+          if (activeConversationId === c.id) {
+            const remaining = convs.filter(x => x.id !== c.id);
+            activeConversationId = remaining.length ? remaining[0].id : 'default_conversation';
+            localStorage.setItem('s_conv_id', activeConversationId);
+          }
+          await loadConversations();
+          await syncSessionData();
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    item.appendChild(del);
+    
+    // Switch on item click
+    item.onclick = async () => {
+      if (activeConversationId !== c.id) {
+        activeConversationId = c.id;
+        localStorage.setItem('s_conv_id', activeConversationId);
+        document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+        switchView('chat');
+        await syncSessionData();
+      }
+    };
+    
+    container.appendChild(item);
+  });
+}
+
 // ==========================================================================
 // 6. API Calls
 // ==========================================================================
 async function checkBackendHealth() {
   try {
     const r = await fetch(`${BASE_URL}/healthz`);
-    if (r.ok) { updateBackendUI(true); await syncConfig(); }
+    if (r.ok) { 
+      updateBackendUI(true); 
+      await syncConfig(); 
+      await loadConversations();
+    }
     else updateBackendUI(false);
   } catch { updateBackendUI(false); }
 }
@@ -395,7 +489,7 @@ async function syncSessionData() {
   } catch(e) { console.error(e); }
 
   try {
-    const r = await fetch(`${BASE_URL}/api/v1/chat/${activeSession}`);
+    const r = await fetch(`${BASE_URL}/api/v1/chat/${activeSession}?conversation_id=${activeConversationId}`);
     if (r.ok) {
       const msgs = await r.json();
       renderActiveMsgs(msgs);
@@ -434,6 +528,7 @@ async function sendMessage() {
 
   const payload = {
     user_id: activeSession,
+    conversation_id: activeConversationId,
     message: text,
     provider: activeProvider,
     model: activeModel,
@@ -480,6 +575,7 @@ async function sendMessage() {
           renderActiveMsgs(ev.active_messages);
           const memR = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
           if (memR.ok) renderMemories(await memR.json());
+          await loadConversations();
         } else if (ev.type === 'error') {
           bubble.textContent = `Error: ${ev.content}`;
         }
@@ -496,7 +592,7 @@ async function sendMessage() {
 }
 
 async function apiClearChat() {
-  try { const r = await fetch(`${BASE_URL}/api/v1/chat/clear/${activeSession}`, { method:'POST' }); return r.ok && (await r.json()).success; }
+  try { const r = await fetch(`${BASE_URL}/api/v1/chat/clear/${activeSession}?conversation_id=${activeConversationId}`, { method:'POST' }); return r.ok && (await r.json()).success; }
   catch { return false; }
 }
 async function apiClearMemories() {
