@@ -11,7 +11,7 @@ from src.agents.nodes import (
 )
 from src.services.memory import clear_all_memories, get_memories
 
-class TestGraphNodes(unittest.TestCase):
+class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         clear_all_memories("test_user_node")
         
@@ -21,17 +21,22 @@ class TestGraphNodes(unittest.TestCase):
         self.assertEqual(res["long_term_memories"], [])
         
     @patch("src.agents.nodes.get_llm")
-    def test_chatbot_node(self, mock_get_llm):
+    async def test_chatbot_node(self, mock_get_llm):
         mock_llm = MagicMock()
         mock_get_llm.return_value = mock_llm
-        mock_llm.invoke.return_value = AIMessage(content="Hello there!", id="ai1")
+        
+        # Define mock async generator for astream
+        async def mock_astream(*args, **kwargs):
+            yield AIMessage(content="Hello there!", id="ai1")
+            
+        mock_llm.astream = mock_astream
         
         state = {
             "user_id": "test_user_node",
             "messages": [HumanMessage(content="Hi", id="h1")],
             "long_term_memories": []
         }
-        res = chatbot_node(state, {})
+        res = await chatbot_node(state, {})
         self.assertEqual(len(res["messages"]), 1)
         self.assertEqual(res["messages"][0].content, "Hello there!")
         
@@ -40,6 +45,7 @@ class TestGraphNodes(unittest.TestCase):
         mock_llm = MagicMock()
         mock_get_llm.return_value = mock_llm
         
+        # mock structured output
         mock_structured = MagicMock()
         mock_structured.invoke.return_value = MagicMock(new_memories=["User prefers Python"])
         mock_llm.with_structured_output.return_value = mock_structured
@@ -63,6 +69,7 @@ class TestGraphNodes(unittest.TestCase):
         mock_llm = MagicMock()
         mock_get_llm.return_value = mock_llm
         
+        # mock structured output
         mock_structured = MagicMock()
         mock_structured.invoke.return_value = MagicMock(extracted_knowledge=["Pruned message highlight: Python dev"])
         mock_llm.with_structured_output.return_value = mock_structured

@@ -95,8 +95,8 @@ def load_memories_node(state: ChatState, config: RunnableConfig, *, store=None) 
         memories_text = [m["content"] for m in memories_list]
     return {"long_term_memories": memories_text}
 
-def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
-    """Invoke the LLM using message history and the loaded long-term memories."""
+async def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
+    """Invoke the LLM using message history and the loaded long-term memories with real-time streaming."""
     configurable = config.get("configurable", {})
     provider = configurable.get("provider", "google")
     model_name = configurable.get("model", "gemini-2.5-flash")
@@ -126,14 +126,20 @@ def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
     
     try:
         llm = get_llm(provider, model_name, api_key)
-        response = llm.invoke(messages)
+        response_content = ""
+        async for chunk in llm.astream(messages):
+            response_content += chunk.content
+        response = AIMessage(content=response_content)
     except Exception as e:
         logger.warning(f"Primary LLM provider '{provider}' failed: {e}. Trying Groq fallback...")
         groq_api_key = os.environ.get("GROQ_API_KEY", "")
         if provider != "groq" and groq_api_key:
             try:
                 llm = get_llm("groq", "llama-3.3-70b-versatile", groq_api_key)
-                response = llm.invoke(messages)
+                response_content = ""
+                async for chunk in llm.astream(messages):
+                    response_content += chunk.content
+                response = AIMessage(content=response_content)
                 logger.info("Successfully fell back to Groq.")
             except Exception as fallback_err:
                 logger.error(f"Groq fallback failed: {fallback_err}")

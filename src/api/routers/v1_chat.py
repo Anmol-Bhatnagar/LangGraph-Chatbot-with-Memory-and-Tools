@@ -37,11 +37,11 @@ logger = logging.getLogger("ChatRouter")
 
 router = APIRouter(prefix="/api/v1")
 
-def run_background_memory_tasks(user_id: str, messages: list, config: dict, conversation_id: str = "default_conversation"):
+async def run_background_memory_tasks(user_id: str, messages: list, config: dict, conversation_id: str = "default_conversation"):
     """Run memory extraction and history trimming in the background, updating SQLite."""
     try:
         logger.info(f"Starting background memory extraction/trimming for user '{user_id}' in conv '{conversation_id}'...")
-        result = memory_app.invoke(
+        result = await memory_app.ainvoke(
             {
                 "messages": messages,
                 "user_id": user_id
@@ -56,7 +56,7 @@ def run_background_memory_tasks(user_id: str, messages: list, config: dict, conv
         logger.error(f"Error in background memory tasks for user '{user_id}': {e}")
 
 @router.post("/chat", response_model=ChatResponse, tags=["Chat"])
-def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = Depends(verify_api_token)):
+async def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = Depends(verify_api_token)):
     """Submit a user message to the chatbot.
     
     Loads history from SQLite, runs the LangGraph compiled graph (updating memory and trimming if needed),
@@ -111,7 +111,7 @@ def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = D
         }
         
         # 4. Invoke LangGraph chatbot compiled graph
-        result = chatbot_app.invoke(
+        result = await chatbot_app.ainvoke(
             {
                 "messages": messages,
                 "user_id": user_id

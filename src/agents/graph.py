@@ -32,7 +32,7 @@ class SqliteStore(InMemoryStore):
         self._load_from_sqlite()
 
     def _init_sqlite_db(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS langgraph_store (
@@ -48,7 +48,7 @@ class SqliteStore(InMemoryStore):
         conn.close()
 
     def _load_from_sqlite(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT namespace, key, value FROM langgraph_store")
         rows = cursor.fetchall()
@@ -90,7 +90,7 @@ class SqliteStore(InMemoryStore):
     def _persist_put(self, namespace, key, value):
         try:
             ns_str = json.dumps(namespace)
-            conn = sqlite3.connect(self.db_path)
+            conn = get_db_connection()
             cursor = conn.cursor()
             if value is None:
                 cursor.execute(

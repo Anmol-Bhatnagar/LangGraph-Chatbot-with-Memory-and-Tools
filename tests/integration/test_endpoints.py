@@ -8,6 +8,12 @@ mock_llm = MagicMock()
 mock_structured_extract = MagicMock()
 mock_structured_trim = MagicMock()
 
+async def mock_astream(*args, **kwargs):
+    from langchain_core.messages import AIMessageChunk
+    yield AIMessageChunk(content="Hello Alice! Nice to meet you.", id="ai_msg_1")
+
+mock_llm.astream = mock_astream
+
 def side_effect(schema):
     from src.agents.nodes import MemoryExtraction, PrunedMemoryExtraction
     if schema == MemoryExtraction:
