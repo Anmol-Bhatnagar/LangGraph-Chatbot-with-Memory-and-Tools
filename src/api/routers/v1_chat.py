@@ -305,10 +305,7 @@ def get_user_memories(user_id: str):
 def create_user_memory(user_id: str, request: MemoryRequest):
     """Manually add a memory fact for a user."""
     memory_id = save_memory(user_id, request.content)
-    if memory_id > 0:
-        # Sync to LangGraph store
-        from src.agents.graph import store
-        store.put((user_id,), str(memory_id), {"content": request.content})
+    if memory_id:
         return GenericResponse(
             success=True,
             message=f"Memory successfully stored with ID: {memory_id}"
@@ -319,13 +316,10 @@ def create_user_memory(user_id: str, request: MemoryRequest):
     )
 
 @router.delete("/memories/{user_id}/{memory_id}", response_model=GenericResponse, tags=["Memories"])
-def delete_user_memory(user_id: str, memory_id: int):
+def delete_user_memory(user_id: str, memory_id: str):
     """Delete a specific memory by its ID for a user."""
     success = delete_memory(user_id, memory_id)
     if success:
-        # Sync to LangGraph store
-        from src.agents.graph import store
-        store.delete((user_id,), str(memory_id))
         return GenericResponse(
             success=True,
             message=f"Memory {memory_id} successfully deleted."
@@ -337,14 +331,9 @@ def delete_user_memory(user_id: str, memory_id: int):
 
 @router.delete("/memories/{user_id}", response_model=GenericResponse, tags=["Memories"])
 def clear_user_memories(user_id: str):
-    """Clear all long-term memories stored in SQLite for a user."""
+    """Clear all long-term memories stored for a user."""
     success = clear_all_memories(user_id)
     if success:
-        # Sync to LangGraph store
-        from src.agents.graph import store
-        items = store.search((user_id,))
-        for item in items:
-            store.delete((user_id,), item.key)
         return GenericResponse(
             success=True,
             message=f"All long-term memories for user '{user_id}' cleared successfully."

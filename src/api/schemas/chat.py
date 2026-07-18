@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
@@ -30,7 +30,7 @@ class MemoryRequest(BaseModel):
     content: str = Field(..., description="The user fact or preference to save manually.")
 
 class MemorySchema(BaseModel):
-    id: int
+    id: Union[int, str]
     content: str
     created_at: str
 

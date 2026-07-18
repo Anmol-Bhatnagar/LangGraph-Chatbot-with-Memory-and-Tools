@@ -224,68 +224,55 @@ def touch_conversation(user_id: str, conversation_id: str, title: str = None):
     except Exception as e:
         logger.error(f"Error touching conversation: {e}")
 
-def save_memory(user_id: str, content: str) -> int:
-    """Save a memory content for a given user."""
+def save_memory(user_id: str, content: str) -> str:
+    """Save a memory content for a given user using the LangGraph store."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO memories (user_id, content) VALUES (?, ?)",
-            (user_id, content)
-        )
-        memory_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        logger.info(f"Saved memory {memory_id} for user '{user_id}': {content}")
+        from src.agents.graph import store
+        import uuid
+        memory_id = str(uuid.uuid4())
+        store.put((user_id,), memory_id, {"content": content})
+        logger.info(f"Saved memory {memory_id} to LangGraph store for user '{user_id}': {content}")
         return memory_id
     except Exception as e:
-        logger.error(f"Error saving memory to database: {e}")
-        return -1
+        logger.error(f"Error saving memory to LangGraph store: {e}")
+        return ""
 
 def get_memories(user_id: str) -> List[Dict[str, Any]]:
-    """Retrieve all memory content strings stored in the SQLite DB for a user."""
+    """Retrieve all memory content strings from the LangGraph store for a user."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, content, created_at FROM memories WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [{"id": r[0], "content": r[1], "created_at": r[2]} for r in rows]
+        from src.agents.graph import store
+        items = store.search((user_id,))
+        return [
+            {
+                "id": item.key,
+                "content": item.value["content"],
+                "created_at": item.created_at.isoformat() if (hasattr(item, "created_at") and item.created_at) else ""
+            }
+            for item in items
+        ]
     except Exception as e:
-        logger.error(f"Error retrieving memories: {e}")
+        logger.error(f"Error retrieving memories from LangGraph store: {e}")
         return []
 
-def delete_memory(user_id: str, memory_id: int) -> bool:
-    """Delete a memory string from SQLite by its unique ID for a user."""
+def delete_memory(user_id: str, memory_id: str) -> bool:
+    """Delete a memory string from LangGraph store by its key for a user."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "DELETE FROM memories WHERE user_id = ? AND id = ?",
-            (user_id, memory_id)
-        )
-        rows_affected = cursor.rowcount
-        conn.commit()
-        conn.close()
-        logger.info(f"Deleted memory {memory_id} for user '{user_id}': status {rows_affected > 0}")
-        return rows_affected > 0
+        from src.agents.graph import store
+        store.delete((user_id,), memory_id)
+        logger.info(f"Deleted memory {memory_id} from LangGraph store for user '{user_id}'")
+        return True
     except Exception as e:
         logger.error(f"Error deleting memory: {e}")
         return False
 
 def clear_all_memories(user_id: str) -> bool:
-    """Delete all memories for a user from SQLite."""
+    """Delete all memories for a user from LangGraph store."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM memories WHERE user_id = ?", (user_id,))
-        rows_affected = cursor.rowcount
-        conn.commit()
-        conn.close()
-        logger.info(f"Cleared all {rows_affected} memories for user '{user_id}'")
+        from src.agents.graph import store
+        items = store.search((user_id,))
+        for item in items:
+            store.delete((user_id,), item.key)
+        logger.info(f"Cleared all memories from LangGraph store for user '{user_id}'")
         return True
     except Exception as e:
         logger.error(f"Error clearing memories: {e}")

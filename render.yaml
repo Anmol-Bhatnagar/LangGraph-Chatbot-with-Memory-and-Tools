@@ -1,3 +1,7 @@
+databases:
+  - name: langgraph_chatbot_db
+    plan: free
+
 services:
   - type: web
     name: langgraph-chatbot
@@ -22,3 +26,7 @@ services:
         sync: false
       - key: LANGCHAIN_PROJECT
         value: "my-agent-service"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: langgraph_chatbot_db
+          property: connectionString
