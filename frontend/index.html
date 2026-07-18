@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LangGraph Memory Chatbot</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="/frontend/style.css">
+</head>
+<body>
+    <!-- Background Decor Blobs -->
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+
+    <div class="app-container">
+        <!-- 1. Sidebar Panel -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fa-solid fa-brain logo-icon"></i>
+                    <span>Memory Engine</span>
+                </div>
+                <p class="sidebar-subtitle">LangGraph Dual-Memory Agent</p>
+            </div>
+            
+            <hr class="divider">
+
+            <div class="sidebar-section">
+                <h3 class="section-title"><i class="fa-solid fa-sliders"></i> Configuration</h3>
+                
+                <div class="form-group">
+                    <label for="provider-select">LLM Provider</label>
+                    <select id="provider-select">
+                        <option value="google">Google Gemini</option>
+                        <option value="groq">Groq Cloud</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="model-select">Model Name</label>
+                    <select id="model-select">
+                        <!-- Populated dynamically via JS -->
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="api-key-input">API Key</label>
+                    <div class="input-with-icon">
+                        <i class="fa-solid fa-key"></i>
+                        <input type="password" id="api-key-input" placeholder="Enter API Key...">
+                    </div>
+                </div>
+
+                <div class="status-indicator" id="api-key-status">
+                    <i class="fa-solid fa-circle-exclamation status-warn-icon"></i>
+                    <span class="status-warn-text">Key required to chat.</span>
+                </div>
+            </div>
+
+            <hr class="divider">
+
+            <div class="sidebar-section">
+                <h3 class="section-title"><i class="fa-solid fa-circle-nodes"></i> Constraints</h3>
+                
+                <div class="form-group">
+                    <label for="session-id-input">User / Session ID</label>
+                    <div class="input-with-icon">
+                        <i class="fa-solid fa-user"></i>
+                        <input type="text" id="session-id-input" value="default_user">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <div class="slider-header">
+                        <label for="memory-limit-slider">Short-Term Limit</label>
+                        <span id="memory-limit-val">6 msgs</span>
+                    </div>
+                    <input type="range" id="memory-limit-slider" min="4" max="20" value="6" step="2">
+                    <small class="help-text">Triggers trimming and SQLite memory extraction when exceeded.</small>
+                </div>
+            </div>
+
+            <hr class="divider">
+
+            <div class="sidebar-section">
+                <h3 class="section-title"><i class="fa-solid fa-bolt"></i> Actions</h3>
+                <div class="action-buttons">
+                    <button id="clear-chat-btn" class="btn btn-secondary">
+                        <i class="fa-solid fa-trash-can"></i> Clear Chat
+                    </button>
+                    <button id="clear-db-btn" class="btn btn-danger">
+                        <i class="fa-solid fa-database"></i> Clear SQLite DB
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="backend-indicator" id="backend-status">
+                    <i class="fa-solid fa-circle-dot status-offline"></i>
+                    <span class="status-text">Checking backend...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 2. Main Content Grid -->
+        <main class="main-content">
+            <!-- Left Side: Chat Section -->
+            <section class="chat-section">
+                <header class="chat-header">
+                    <div class="chat-title-info">
+                        <h1 class="main-header">LangGraph Memory Chatbot</h1>
+                        <p class="sub-header">Short-Term Conversation Trimming & SQLite-Persisted Long-Term Semantic Memories.</p>
+                    </div>
+                    <div class="active-session-badge">
+                        <span class="badge-dot"></span>
+                        Active Session: <strong id="active-session-name">default_user</strong>
+                    </div>
+                </header>
+
+                <!-- Messages Container -->
+                <div class="chat-messages" id="chat-messages-container">
+                    <!-- Welcome / Intro Message -->
+                    <div class="welcome-card" id="welcome-message-card">
+                        <i class="fa-solid fa-robot welcome-icon"></i>
+                        <h2>Welcome! Start chatting with the agent.</h2>
+                        <p>The short-term memory limit is configured in the sidebar. Once messages exceed this limit, older conversations are pruned, summarized into long-term memories, and persisted to SQLite.</p>
+                    </div>
+                </div>
+
+                <!-- Input Panel -->
+                <div class="chat-input-panel">
+                    <textarea id="chat-textarea" placeholder="Say something..." disabled></textarea>
+                    <button id="send-msg-btn" class="send-btn" disabled>
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Right Side: Debugger Section -->
+            <section class="debug-section">
+                <div class="debug-card">
+                    <header class="debug-header">
+                        <h3><i class="fa-solid fa-bug"></i> Memory Debugger</h3>
+                        <div class="tabs">
+                            <button class="tab-btn active" data-tab="tab-long">
+                                <i class="fa-solid fa-database"></i> Long-Term
+                            </button>
+                            <button class="tab-btn" data-tab="tab-short">
+                                <i class="fa-solid fa-hourglass-half"></i> Short-Term
+                            </button>
+                            <button class="tab-btn" data-tab="tab-info">
+                                <i class="fa-solid fa-circle-info"></i> How it Works
+                            </button>
+                        </div>
+                    </header>
+
+                    <div class="tab-content active" id="tab-long">
+                        <div class="content-description">
+                            <h4>Stored SQLite Facts</h4>
+                            <p>These facts are fetched from the local SQLite database. They are automatically injected into the chatbot's system prompt to give it long-term recall.</p>
+                        </div>
+
+                        <!-- Memories List -->
+                        <div class="memories-list" id="sqlite-memories-container">
+                            <div class="empty-state">No long-term memories found. Try chatting!</div>
+                        </div>
+
+                        <hr class="content-divider">
+
+                        <!-- Add Manual Fact -->
+                        <div class="add-manual-memory">
+                            <h5>Add Memory Manually (Admin)</h5>
+                            <div class="manual-input-group">
+                                <input type="text" id="manual-memory-input" placeholder="e.g. User allergic to peanuts.">
+                                <button id="save-manual-memory-btn" class="btn btn-primary">
+                                    <i class="fa-solid fa-plus"></i> Save
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-content" id="tab-short">
+                        <div class="content-description">
+                            <h4>Active Graph Messages</h4>
+                            <p>These are the exact message objects currently active in the LangGraph state. When count exceeds the short-term limit, trimming is triggered.</p>
+                        </div>
+
+                        <div class="metric-container">
+                            <span class="metric-label">Active Messages Count:</span>
+                            <span class="metric-value" id="active-msgs-count">0</span>
+                        </div>
+
+                        <!-- Active Messages List -->
+                        <div class="active-msgs-list" id="active-messages-container">
+                            <div class="empty-state">Short-term chat history is empty.</div>
+                        </div>
+                    </div>
+
+                    <div class="tab-content" id="tab-info">
+                        <div class="architecture-guide">
+                            <h4>System Architecture</h4>
+                            <p>This chatbot demonstrates an advanced AI memory paradigm using <strong>LangGraph</strong> and <strong>SQLite</strong>:</p>
+                            
+                            <ol class="arch-list">
+                                <li>
+                                    <strong>Short-Term Memory:</strong>
+                                    <p>Consists of the direct list of messages inside the LangGraph state. Capped to prevent context-window bloat and reduce costs.</p>
+                                </li>
+                                <li>
+                                    <strong>Long-Term Memory:</strong>
+                                    <p>A local SQLite database storing facts extracted by the LLM. Injected into the System Prompt on each interaction.</p>
+                                </li>
+                                <li>
+                                    <strong>Dynamic Extraction Nodes:</strong>
+                                    <ul>
+                                        <li><strong>Turn Analyzer:</strong> Runs after every message turn. Decides whether to extract user facts or preferences to save in SQLite.</li>
+                                        <li><strong>History Pruning:</strong> Cursors older messages when limit is reached. Summarizes their content into keypoints and commits to SQLite before removing them from state.</li>
+                                    </ul>
+                                </li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Frontend logic script -->
+    <script src="/frontend/app.js"></script>
+</body>
+</html>

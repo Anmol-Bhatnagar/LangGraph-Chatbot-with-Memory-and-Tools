@@ -1,0 +1,16 @@
+[project]
+name = "my-agent-service"
+version = "1.0.0"
+description = "FastAPI backend exposing LangGraph chatbot with short-term & long-term memory"
+dependencies = [
+    "fastapi",
+    "streamlit",
+    "langgraph",
+    "langchain-core",
+    "langchain-google-genai",
+    "langchain-openai",
+    "python-dotenv",
+    "pydantic",
+    "requests",
+    "langchain-groq"
+]
