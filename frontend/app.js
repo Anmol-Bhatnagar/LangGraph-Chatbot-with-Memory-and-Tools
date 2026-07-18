@@ -1,646 +1,513 @@
 // ==========================================================================
-// 1. Constants & State Management
+// 1. Constants & State
 // ==========================================================================
-const BASE_URL = window.location.origin; // Same origin (port 8000)
+const BASE_URL = window.location.origin;
 
 const PROVIDER_MODELS = {
-    google: [
-        { value: 'gemini-2.0-flash', label: 'gemini-2.0-flash (Recommended)' },
-        { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
-        { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' }
-    ],
-    groq: [
-        { value: 'llama-3.3-70b-versatile', label: 'llama-3.3-70b-versatile' },
-        { value: 'llama-3.1-8b-instant', label: 'llama-3.1-8b-instant' },
-        { value: 'gemma2-9b-it', label: 'gemma2-9b-it' }
-    ]
+  google: [
+    { value: 'gemini-2.0-flash', label: 'gemini-2.0-flash' },
+    { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
+    { value: 'gemini-2.5-pro',   label: 'gemini-2.5-pro' }
+  ],
+  groq: [
+    { value: 'llama-3.3-70b-versatile', label: 'llama-3.3-70b-versatile' },
+    { value: 'llama-3.1-8b-instant',    label: 'llama-3.1-8b-instant' },
+    { value: 'gemma2-9b-it',            label: 'gemma2-9b-it' }
+  ]
 };
 
-let activeSession = 'default_user';
-let activeProvider = 'google';
-let activeModel = 'gemini-2.0-flash';
-let activeLimit = 6;
+let activeSession  = 'default_user';
+let activeProvider  = 'google';
+let activeModel     = 'gemini-2.0-flash';
+let activeLimit     = 6;
 let isBackendOnline = false;
-let serverConfig = { google: false, groq: false };
+let serverConfig    = { google: false, groq: false };
 
-// DOM Elements
-const providerSelect = document.getElementById('provider-select');
-const modelSelect = document.getElementById('model-select');
-const apiKeyInput = document.getElementById('api-key-input');
-const apiKeyStatus = document.getElementById('api-key-status');
-const sessionIdInput = document.getElementById('session-id-input');
-const memoryLimitSlider = document.getElementById('memory-limit-slider');
-const memoryLimitVal = document.getElementById('memory-limit-val');
-const clearChatBtn = document.getElementById('clear-chat-btn');
-const clearDbBtn = document.getElementById('clear-db-btn');
-const backendStatus = document.getElementById('backend-status');
-
-const activeSessionName = document.getElementById('active-session-name');
-const chatMessagesContainer = document.getElementById('chat-messages-container');
-const welcomeMessageCard = document.getElementById('welcome-message-card');
-const chatTextarea = document.getElementById('chat-textarea');
-const sendMsgBtn = document.getElementById('send-msg-btn');
-
-const sqliteMemoriesContainer = document.getElementById('sqlite-memories-container');
-const manualMemoryInput = document.getElementById('manual-memory-input');
-const saveManualMemoryBtn = document.getElementById('save-manual-memory-btn');
-const activeMsgsCount = document.getElementById('active-msgs-count');
-const activeMessagesContainer = document.getElementById('active-messages-container');
+// DOM refs
+const providerSelect     = document.getElementById('provider-select');
+const modelSelect        = document.getElementById('model-select');
+const apiKeyInput        = document.getElementById('api-key-input');
+const apiKeyStatus       = document.getElementById('api-key-status');
+const sessionIdInput     = document.getElementById('session-id-input');
+const memoryLimitSlider  = document.getElementById('memory-limit-slider');
+const memoryLimitVal     = document.getElementById('memory-limit-val');
+const clearChatBtn       = document.getElementById('clear-chat-btn');
+const clearDbBtn         = document.getElementById('clear-db-btn');
+const backendStatus      = document.getElementById('backend-status');
+const activeSessionName  = document.getElementById('active-session-name');
+const chatContainer      = document.getElementById('chat-messages-container');
+const welcomeState       = document.getElementById('welcome-state');
+const chatTextarea       = document.getElementById('chat-textarea');
+const sendMsgBtn         = document.getElementById('send-msg-btn');
+const sqliteMemories     = document.getElementById('sqlite-memories-container');
+const manualMemInput     = document.getElementById('manual-memory-input');
+const saveMemBtn         = document.getElementById('save-manual-memory-btn');
+const activeMsgsCount    = document.getElementById('active-msgs-count');
+const activeMsgsList     = document.getElementById('active-messages-container');
+const topbarModelName    = document.getElementById('topbar-model-name');
+const featureCards       = document.getElementById('feature-cards');
 
 // ==========================================================================
-// 2. Initialization & Event Listeners
+// 2. Init
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    loadSettingsFromStorage();
-    initTabButtons();
-    initEventListeners();
-    updateModelOptions();
-    checkBackendHealth();
-    syncSessionData();
+  loadSettings();
+  updateModelOptions();
+  initListeners();
+  checkBackendHealth();
+  syncSessionData();
 });
 
-function initEventListeners() {
-    // LLM Provider select change
-    providerSelect.addEventListener('change', (e) => {
-        activeProvider = e.target.value;
-        updateModelOptions();
-        saveSettingsToStorage();
-        updateApiKeyInputPlaceholder();
-        checkApiKeyLoadStatus();
-    });
+// ==========================================================================
+// 3. Event Listeners
+// ==========================================================================
+function initListeners() {
+  // Provider change
+  providerSelect.addEventListener('change', e => {
+    activeProvider = e.target.value;
+    updateModelOptions();
+    saveSettings();
+    updateApiKeyPlaceholder();
+    checkApiKeyStatus();
+  });
 
-    // Model select change
-    modelSelect.addEventListener('change', (e) => {
-        activeModel = e.target.value;
-        saveSettingsToStorage();
-    });
+  // Model change
+  modelSelect.addEventListener('change', e => {
+    activeModel = e.target.value;
+    topbarModelName.textContent = activeModel;
+    saveSettings();
+  });
 
-    // API Key input change
-    apiKeyInput.addEventListener('input', () => {
-        saveSettingsToStorage();
-        checkApiKeyLoadStatus();
-    });
+  // API Key
+  apiKeyInput.addEventListener('input', () => { saveSettings(); checkApiKeyStatus(); });
 
-    // Session ID change
-    sessionIdInput.addEventListener('change', (e) => {
-        const newSession = e.target.value.trim() || 'default_user';
-        if (newSession !== activeSession) {
-            activeSession = newSession;
-            activeSessionName.textContent = activeSession;
-            saveSettingsToStorage();
-            syncSessionData();
-            showToast(`Switched user profile to: "${activeSession}"`);
-        }
-    });
+  // Session ID
+  sessionIdInput.addEventListener('change', e => {
+    const v = e.target.value.trim() || 'default_user';
+    if (v !== activeSession) {
+      activeSession = v;
+      activeSessionName.textContent = activeSession;
+      saveSettings();
+      syncSessionData();
+      showToast(`Switched to session: "${activeSession}"`);
+    }
+  });
 
-    // Memory Limit slider change
-    memoryLimitSlider.addEventListener('input', (e) => {
-        activeLimit = parseInt(e.target.value);
-        memoryLimitVal.textContent = `${activeLimit} msgs`;
-    });
-    memoryLimitSlider.addEventListener('change', () => {
-        saveSettingsToStorage();
-    });
+  // Limit slider
+  memoryLimitSlider.addEventListener('input', e => {
+    activeLimit = parseInt(e.target.value);
+    memoryLimitVal.textContent = activeLimit;
+  });
+  memoryLimitSlider.addEventListener('change', () => saveSettings());
 
-    // Clear Chat button click
-    clearChatBtn.addEventListener('click', async () => {
-        if (confirm('Are you sure you want to clear the active conversation history? This will not delete SQLite memories.')) {
-            const success = await apiClearChatHistory();
-            if (success) {
-                clearChatUI();
-                showToast('Short-term conversation history cleared!');
-                syncSessionData();
-            }
-        }
-    });
+  // Clear Chat
+  clearChatBtn.addEventListener('click', async () => {
+    if (!confirm('Clear the active conversation history?')) return;
+    if (await apiClearChat()) {
+      clearChatUI();
+      showToast('Chat cleared!');
+      syncSessionData();
+    }
+  });
 
-    // Clear SQLite DB button click
-    clearDbBtn.addEventListener('click', async () => {
-        if (confirm('CAUTION: Are you sure you want to clear all stored long-term memories for this user from SQLite?')) {
-            const success = await apiClearAllMemories();
-            if (success) {
-                showToast('SQLite long-term memory cleared!');
-                syncSessionData();
-            }
-        }
-    });
+  // Clear DB
+  clearDbBtn.addEventListener('click', async () => {
+    if (!confirm('Delete all long-term memories?')) return;
+    if (await apiClearMemories()) {
+      showToast('Memories cleared!');
+      syncSessionData();
+    }
+  });
 
-    // Textarea input sizing & key submit
-    chatTextarea.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
-    });
-    chatTextarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
+  // Textarea auto-resize & Enter submit
+  chatTextarea.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = this.scrollHeight + 'px';
+  });
+  chatTextarea.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
 
-    // Send Message button click
-    sendMsgBtn.addEventListener('click', sendMessage);
+  // Send button
+  sendMsgBtn.addEventListener('click', sendMessage);
 
-    // Save Manual Memory click
-    saveManualMemoryBtn.addEventListener('click', async () => {
-        const content = manualMemoryInput.value.trim();
-        if (content) {
-            const success = await apiSaveManualMemory(content);
-            if (success) {
-                manualMemoryInput.value = '';
-                showToast('Manual memory saved successfully!');
-                syncSessionData();
-            }
-        }
-    });
-}
+  // Save manual memory
+  saveMemBtn.addEventListener('click', async () => {
+    const text = manualMemInput.value.trim();
+    if (!text) return;
+    if (await apiSaveMemory(text)) {
+      manualMemInput.value = '';
+      showToast('Memory saved!');
+      syncSessionData();
+    }
+  });
 
-function initTabButtons() {
-    const tabBtns = document.querySelectorAll('.tab-btn');
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            // Remove active classes
-            tabBtns.forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            // Add active class to clicked button
-            btn.classList.add('active');
-            
-            // Activate corresponding tab content
-            const tabId = btn.getAttribute('data-tab');
-            document.getElementById(tabId).classList.add('active');
-        });
+  // Sidebar nav
+  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+    item.addEventListener('click', () => switchView(item.dataset.view));
+  });
+
+  // Feature cards
+  document.querySelectorAll('.feature-card[data-view]').forEach(card => {
+    card.addEventListener('click', () => switchView(card.dataset.view));
+  });
+
+  // Quick chips
+  document.querySelectorAll('.quick-chip[data-prompt]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      chatTextarea.value = chip.dataset.prompt;
+      chatTextarea.focus();
     });
+  });
+
+  // Settings toggle
+  const settingsToggle = document.getElementById('sidebar-settings-toggle');
+  const settingsPanel  = document.getElementById('sidebar-settings-panel');
+  settingsToggle.addEventListener('click', () => {
+    settingsPanel.classList.toggle('open');
+    settingsToggle.classList.toggle('active');
+  });
+
+  // Topbar config btn
+  document.getElementById('topbar-config-btn').addEventListener('click', () => {
+    settingsPanel.classList.toggle('open');
+    settingsToggle.classList.toggle('active');
+  });
+
+  // New Chat btn
+  document.getElementById('new-chat-btn').addEventListener('click', async () => {
+    if (await apiClearChat()) {
+      clearChatUI();
+      switchView('chat');
+      showToast('New chat started!');
+      syncSessionData();
+    }
+  });
 }
 
 // ==========================================================================
-// 3. UI Helpers
+// 4. View Switching
+// ==========================================================================
+function switchView(view) {
+  // Nav items
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const navTarget = document.querySelector(`.nav-item[data-view="${view}"]`);
+  if (navTarget) navTarget.classList.add('active');
+
+  // Panels
+  document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
+  const panelId = `view-${view}`;
+  const panel = document.getElementById(panelId);
+  if (panel) panel.classList.add('active');
+}
+
+// ==========================================================================
+// 5. UI Helpers
 // ==========================================================================
 function updateModelOptions() {
-    modelSelect.innerHTML = '';
-    const models = PROVIDER_MODELS[activeProvider] || [];
-    models.forEach(model => {
-        const option = document.createElement('option');
-        option.value = model.value;
-        option.textContent = model.label;
-        if (model.value === activeModel) {
-            option.selected = true;
-        }
-        modelSelect.appendChild(option);
-    });
-    // If selected model is not in the new provider list, pick the first one
-    if (models.length > 0 && !models.some(m => m.value === activeModel)) {
-        activeModel = models[0].value;
-        modelSelect.value = activeModel;
-    }
+  modelSelect.innerHTML = '';
+  const models = PROVIDER_MODELS[activeProvider] || [];
+  models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.value;
+    opt.textContent = m.label;
+    if (m.value === activeModel) opt.selected = true;
+    modelSelect.appendChild(opt);
+  });
+  if (!models.some(m => m.value === activeModel) && models.length) {
+    activeModel = models[0].value;
+    modelSelect.value = activeModel;
+  }
+  topbarModelName.textContent = activeModel;
 }
 
-function updateApiKeyInputPlaceholder() {
-    const isServerConfigured = serverConfig[activeProvider];
-    if (isServerConfigured) {
-        apiKeyInput.placeholder = 'Configured in server .env';
-    } else {
-        apiKeyInput.placeholder = activeProvider === 'google' ? 'Enter Gemini API Key...' : 'Enter Groq API Key...';
-    }
+function updateApiKeyPlaceholder() {
+  const configured = serverConfig[activeProvider];
+  apiKeyInput.placeholder = configured ? 'Configured in server .env' : `Enter ${activeProvider === 'google' ? 'Gemini' : 'Groq'} API Key...`;
 }
 
-function checkApiKeyLoadStatus() {
-    const key = apiKeyInput.value.trim();
-    const isServerConfigured = serverConfig[activeProvider];
-    if (key || isServerConfigured) {
-        apiKeyStatus.className = 'status-indicator status-ok';
-        apiKeyStatus.innerHTML = `
-            <i class="fa-solid fa-circle-check status-ok-icon"></i>
-            <span class="status-ok-text">${key ? 'Key loaded successfully.' : 'Using API key from server .env.'}</span>
-        `;
-        chatTextarea.disabled = !isBackendOnline;
-        sendMsgBtn.disabled = !isBackendOnline;
-    } else {
-        apiKeyStatus.className = 'status-indicator';
-        apiKeyStatus.innerHTML = `
-            <i class="fa-solid fa-circle-exclamation status-warn-icon"></i>
-            <span class="status-warn-text">Key required to chat.</span>
-        `;
-        chatTextarea.disabled = true;
-        sendMsgBtn.disabled = true;
-    }
+function checkApiKeyStatus() {
+  const key = apiKeyInput.value.trim();
+  const configured = serverConfig[activeProvider];
+  if (key || configured) {
+    apiKeyStatus.className = 'status-card ok';
+    apiKeyStatus.innerHTML = `<i class="fa-solid fa-circle-check"></i><span>${key ? 'Key loaded.' : 'Using server .env key.'}</span>`;
+    chatTextarea.disabled = !isBackendOnline;
+    sendMsgBtn.disabled = !isBackendOnline;
+  } else {
+    apiKeyStatus.className = 'status-card warn';
+    apiKeyStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i><span>API key required.</span>`;
+    chatTextarea.disabled = true;
+    sendMsgBtn.disabled = true;
+  }
 }
 
-function updateBackendStatus(online) {
-    isBackendOnline = online;
-    if (online) {
-        backendStatus.innerHTML = `
-            <i class="fa-solid fa-circle-dot status-online"></i>
-            <span class="status-text">Backend API Online</span>
-        `;
-        checkApiKeyLoadStatus(); // Re-enable chat fields if key loaded
-    } else {
-        backendStatus.innerHTML = `
-            <i class="fa-solid fa-circle-dot status-offline"></i>
-            <span class="status-text">Backend API Offline (${BASE_URL})</span>
-        `;
-        chatTextarea.disabled = true;
-        sendMsgBtn.disabled = true;
-    }
+function updateBackendUI(online) {
+  isBackendOnline = online;
+  const dot = backendStatus.querySelector('.pulse-dot');
+  const label = backendStatus.querySelector('span:last-child');
+  if (online) {
+    dot.className = 'pulse-dot online';
+    label.textContent = 'Backend Online';
+    checkApiKeyStatus();
+  } else {
+    dot.className = 'pulse-dot offline';
+    label.textContent = 'Backend Offline';
+    chatTextarea.disabled = true;
+    sendMsgBtn.disabled = true;
+  }
 }
 
-function loadSettingsFromStorage() {
-    activeSession = localStorage.getItem('chat_session_id') || 'default_user';
-    activeProvider = localStorage.getItem('chat_provider') || 'google';
-    activeModel = localStorage.getItem('chat_model') || 'gemini-2.5-flash';
-    activeLimit = parseInt(localStorage.getItem('chat_limit') || '6');
-    const key = localStorage.getItem(`api_key_${activeProvider}`) || '';
+function loadSettings() {
+  activeSession  = localStorage.getItem('s_session') || 'default_user';
+  activeProvider  = localStorage.getItem('s_provider') || 'google';
+  activeModel     = localStorage.getItem('s_model') || 'gemini-2.0-flash';
+  activeLimit     = parseInt(localStorage.getItem('s_limit') || '6');
+  const key       = localStorage.getItem(`s_key_${activeProvider}`) || '';
 
-    sessionIdInput.value = activeSession;
-    activeSessionName.textContent = activeSession;
-    providerSelect.value = activeProvider;
-    apiKeyInput.value = key;
-    memoryLimitSlider.value = activeLimit;
-    memoryLimitVal.textContent = `${activeLimit} msgs`;
-
-    updateApiKeyInputPlaceholder();
+  sessionIdInput.value = activeSession;
+  activeSessionName.textContent = activeSession;
+  providerSelect.value = activeProvider;
+  apiKeyInput.value = key;
+  memoryLimitSlider.value = activeLimit;
+  memoryLimitVal.textContent = activeLimit;
+  updateApiKeyPlaceholder();
 }
 
-function saveSettingsToStorage() {
-    localStorage.setItem('chat_session_id', activeSession);
-    localStorage.setItem('chat_provider', activeProvider);
-    localStorage.setItem('chat_model', activeModel);
-    localStorage.setItem('chat_limit', activeLimit);
-    localStorage.setItem(`api_key_${activeProvider}`, apiKeyInput.value.trim());
+function saveSettings() {
+  localStorage.setItem('s_session', activeSession);
+  localStorage.setItem('s_provider', activeProvider);
+  localStorage.setItem('s_model', activeModel);
+  localStorage.setItem('s_limit', activeLimit);
+  localStorage.setItem(`s_key_${activeProvider}`, apiKeyInput.value.trim());
 }
 
-function renderMessage(role, content) {
-    // Hide welcome card if present
-    welcomeMessageCard.style.display = 'none';
+function addMessage(role, content) {
+  welcomeState.style.display = 'none';
+  featureCards.style.display = 'none';
+  chatContainer.classList.add('visible');
 
-    const wrapper = document.createElement('div');
-    wrapper.className = `message-wrapper ${role === 'user' ? 'user' : 'assistant'}`;
+  const msg = document.createElement('div');
+  msg.className = `msg ${role}`;
 
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.innerHTML = role === 'user' ? '<i class="fa-solid fa-user"></i>' : '<i class="fa-solid fa-robot"></i>';
+  const av = document.createElement('div');
+  av.className = 'msg-avatar';
+  av.innerHTML = role === 'user' ? '<i class="fa-solid fa-user"></i>' : '<i class="fa-solid fa-robot"></i>';
 
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    bubble.textContent = content;
+  const bub = document.createElement('div');
+  bub.className = 'msg-bubble';
+  bub.textContent = content;
 
-    wrapper.appendChild(avatar);
-    wrapper.appendChild(bubble);
-    chatMessagesContainer.appendChild(wrapper);
-    chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+  msg.appendChild(av);
+  msg.appendChild(bub);
+  chatContainer.appendChild(msg);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
 function clearChatUI() {
-    // Remove all message-wrappers
-    const wrappers = chatMessagesContainer.querySelectorAll('.message-wrapper');
-    wrappers.forEach(w => w.remove());
-    welcomeMessageCard.style.display = 'block';
+  chatContainer.innerHTML = '';
+  chatContainer.classList.remove('visible');
+  welcomeState.style.display = '';
+  featureCards.style.display = '';
 }
 
-function showToast(message) {
-    const toast = document.createElement('div');
-    toast.style.position = 'fixed';
-    toast.style.bottom = '2rem';
-    toast.style.right = '2rem';
-    toast.style.background = 'rgba(30, 41, 59, 0.95)';
-    toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-    toast.style.borderLeft = '4px solid var(--primary)';
-    toast.style.color = '#fff';
-    toast.style.padding = '0.75rem 1.25rem';
-    toast.style.borderRadius = '8px';
-    toast.style.fontSize = '0.85rem';
-    toast.style.fontWeight = '600';
-    toast.style.zIndex = '1000';
-    toast.style.boxShadow = 'var(--shadow-md)';
-    toast.style.animation = 'slideIn 0.2s ease-out';
-    
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.style.animation = 'fadeOut 0.3s ease-out forwards';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+function showToast(text) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = '0.3s'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
-function renderMemories(memories) {
-    sqliteMemoriesContainer.innerHTML = '';
-    if (!memories || memories.length === 0) {
-        sqliteMemoriesContainer.innerHTML = '<div class="empty-state">No long-term memories found. Try chatting!</div>';
-        return;
-    }
-
-    memories.forEach(mem => {
-        const card = document.createElement('div');
-        card.className = 'memory-card';
-
-        const info = document.createElement('div');
-        info.className = 'memory-info';
-        
-        const content = document.createElement('div');
-        content.className = 'memory-content';
-        content.textContent = mem.content;
-
-        const ts = document.createElement('div');
-        ts.className = 'memory-timestamp';
-        ts.textContent = `ID: ${mem.id} | Saved: ${mem.created_at}`;
-
-        info.appendChild(content);
-        info.appendChild(ts);
-
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'delete-mem-btn';
-        deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
-        deleteBtn.title = 'Delete memory';
-        deleteBtn.addEventListener('click', async () => {
-            if (confirm('Delete this long-term memory fact?')) {
-                const success = await apiDeleteMemory(mem.id);
-                if (success) {
-                    showToast('Memory deleted!');
-                    syncSessionData();
-                }
-            }
-        });
-
-        card.appendChild(info);
-        card.appendChild(deleteBtn);
-        sqliteMemoriesContainer.appendChild(card);
-    });
+function renderMemories(mems) {
+  sqliteMemories.innerHTML = '';
+  if (!mems || !mems.length) {
+    sqliteMemories.innerHTML = '<div class="empty-state"><i class="fa-regular fa-face-smile-wink"></i> No memories yet. Start chatting!</div>';
+    return;
+  }
+  mems.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'mem-card';
+    card.innerHTML = `
+      <div>
+        <div class="mem-text">${m.content}</div>
+        <div class="mem-ts">ID: ${m.id} · ${m.created_at}</div>
+      </div>
+    `;
+    const del = document.createElement('button');
+    del.className = 'mem-del';
+    del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+    del.onclick = async () => {
+      if (confirm('Delete this memory?') && await apiDeleteMemory(m.id)) {
+        showToast('Deleted.');
+        syncSessionData();
+      }
+    };
+    card.appendChild(del);
+    sqliteMemories.appendChild(card);
+  });
 }
 
-function renderActiveMessagesList(messages) {
-    activeMessagesContainer.innerHTML = '';
-    activeMsgsCount.textContent = messages.length;
-
-    if (!messages || messages.length === 0) {
-        activeMessagesContainer.innerHTML = '<div class="empty-state">Short-term chat history is empty.</div>';
-        return;
-    }
-
-    messages.forEach((msg, idx) => {
-        const card = document.createElement('div');
-        card.className = `active-msg-card ${msg.role === 'user' ? 'user' : 'assistant'}`;
-
-        const header = document.createElement('div');
-        header.className = 'active-msg-header';
-        
-        const label = document.createElement('span');
-        label.textContent = `[${idx}] ${msg.role === 'user' ? 'HumanMessage' : 'AIMessage'}`;
-
-        const idSpan = document.createElement('span');
-        idSpan.style.opacity = '0.6';
-        idSpan.textContent = `ID: ${msg.id ? msg.id.substring(0, 8) : 'N/A'}`;
-
-        header.appendChild(label);
-        header.appendChild(idSpan);
-
-        const content = document.createElement('div');
-        content.className = 'active-msg-content';
-        content.textContent = msg.content;
-
-        card.appendChild(header);
-        card.appendChild(content);
-        activeMessagesContainer.appendChild(card);
-    });
+function renderActiveMsgs(msgs) {
+  activeMsgsList.innerHTML = '';
+  activeMsgsCount.textContent = msgs.length;
+  if (!msgs.length) {
+    activeMsgsList.innerHTML = '<div class="empty-state"><i class="fa-regular fa-comments"></i> No active messages.</div>';
+    return;
+  }
+  msgs.forEach((m, i) => {
+    const card = document.createElement('div');
+    card.className = `amsg ${m.role === 'user' ? 'user' : 'assistant'}`;
+    card.innerHTML = `
+      <div class="amsg-header">
+        <span>[${i}] ${m.role === 'user' ? 'HumanMessage' : 'AIMessage'}</span>
+        <span style="opacity:.5">${m.id ? m.id.substring(0,8) : ''}</span>
+      </div>
+      <div class="amsg-content">${m.content}</div>
+    `;
+    activeMsgsList.appendChild(card);
+  });
 }
 
 // ==========================================================================
-// 4. API Request Calls
+// 6. API Calls
 // ==========================================================================
 async function checkBackendHealth() {
-    try {
-        const res = await fetch(`${BASE_URL}/healthz`, { method: 'GET' });
-        if (res.status === 200) {
-            updateBackendStatus(true);
-            await syncConfigStatus();
-        } else {
-            updateBackendStatus(false);
-        }
-    } catch {
-        updateBackendStatus(false);
-    }
+  try {
+    const r = await fetch(`${BASE_URL}/healthz`);
+    if (r.ok) { updateBackendUI(true); await syncConfig(); }
+    else updateBackendUI(false);
+  } catch { updateBackendUI(false); }
 }
 
-async function syncConfigStatus() {
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/config`);
-        if (res.ok) {
-            serverConfig = await res.json();
-            checkApiKeyLoadStatus();
-            updateApiKeyInputPlaceholder();
-        }
-    } catch (e) {
-        console.error('Failed to sync config status:', e);
-    }
+async function syncConfig() {
+  try {
+    const r = await fetch(`${BASE_URL}/api/v1/config`);
+    if (r.ok) { serverConfig = await r.json(); checkApiKeyStatus(); updateApiKeyPlaceholder(); }
+  } catch(e) { console.error(e); }
 }
 
 async function syncSessionData() {
-    if (!isBackendOnline) return;
+  if (!isBackendOnline) return;
+  try {
+    const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
+    if (r.ok) renderMemories(await r.json());
+  } catch(e) { console.error(e); }
 
-    // 1. Fetch memories
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
-        if (res.ok) {
-            const data = await res.json();
-            renderMemories(data);
-        }
-    } catch (e) {
-        console.error('Failed to sync memories:', e);
+  try {
+    const r = await fetch(`${BASE_URL}/api/v1/chat/${activeSession}`);
+    if (r.ok) {
+      const msgs = await r.json();
+      renderActiveMsgs(msgs);
+      clearChatUI();
+      if (msgs.length) msgs.forEach(m => addMessage(m.role, m.content));
     }
-
-    // 2. Fetch short-term active messages
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/chat/${activeSession}`);
-        if (res.ok) {
-            const data = await res.json();
-            renderActiveMessagesList(data);
-            
-            // Sync current chat log UI as well
-            clearChatUI();
-            data.forEach(msg => {
-                renderMessage(msg.role, msg.content);
-            });
-        }
-    } catch (e) {
-        console.error('Failed to sync chat history:', e);
-    }
+  } catch(e) { console.error(e); }
 }
 
 async function sendMessage() {
-    const text = chatTextarea.value.trim();
-    const apiKey = apiKeyInput.value.trim();
-    const isServerConfigured = serverConfig[activeProvider];
-    if (!text || (!apiKey && !isServerConfigured) || !isBackendOnline) return;
+  const text = chatTextarea.value.trim();
+  const apiKey = apiKeyInput.value.trim();
+  const configured = serverConfig[activeProvider];
+  if (!text || (!apiKey && !configured) || !isBackendOnline) return;
 
-    // Clear textbox & disable inputs during thinking state
-    chatTextarea.value = '';
-    chatTextarea.style.height = '48px';
-    chatTextarea.disabled = true;
-    sendMsgBtn.disabled = true;
+  chatTextarea.value = '';
+  chatTextarea.style.height = 'auto';
+  chatTextarea.disabled = true;
+  sendMsgBtn.disabled = true;
 
-    // Render User message instantly
-    renderMessage('user', text);
+  addMessage('user', text);
 
-    // Hide welcome card if present
-    welcomeMessageCard.style.display = 'none';
+  // Create streaming bubble
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg assistant';
+  const av = document.createElement('div');
+  av.className = 'msg-avatar';
+  av.innerHTML = '<i class="fa-solid fa-robot"></i>';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="opacity:.4"></i>';
+  wrapper.appendChild(av);
+  wrapper.appendChild(bubble);
+  chatContainer.appendChild(wrapper);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
 
-    // Create assistant message bubble with loading spinner
-    const wrapper = document.createElement('div');
-    wrapper.className = 'message-wrapper assistant';
-    
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.innerHTML = '<i class="fa-solid fa-robot"></i>';
-    
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    bubble.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
-    
-    wrapper.appendChild(avatar);
-    wrapper.appendChild(bubble);
-    chatMessagesContainer.appendChild(wrapper);
-    chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+  const payload = {
+    user_id: activeSession,
+    message: text,
+    provider: activeProvider,
+    model: activeModel,
+    api_key: apiKey,
+    limit: activeLimit
+  };
 
-    // Request payload
-    const payload = {
-        user_id: activeSession,
-        message: text,
-        provider: activeProvider,
-        model: activeModel,
-        api_key: apiKey,
-        limit: activeLimit
-    };
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Token': 'streamlit-frontend-client' },
+      body: JSON.stringify(payload)
+    });
 
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/chat/stream`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-API-Token': 'streamlit-frontend-client'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            bubble.textContent = `Error: ${err.detail || 'Could not stream response.'}`;
-            return;
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let streamedText = '';
-        let spinnerRemoved = false;
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // save incomplete line
-
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6).trim();
-                    if (!dataStr) continue;
-
-                    const eventData = JSON.parse(dataStr);
-                    if (eventData.type === 'chunk') {
-                        if (!spinnerRemoved) {
-                            bubble.innerHTML = '';
-                            spinnerRemoved = true;
-                        }
-                        streamedText += eventData.content;
-                        bubble.textContent = streamedText;
-                        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-                    } else if (eventData.type === 'done') {
-                        // Sync active messages list
-                        renderActiveMessagesList(eventData.active_messages);
-
-                        // Re-fetch SQLite memories since node analyzer might have extracted something new
-                        const memRes = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
-                        if (memRes.ok) {
-                            renderMemories(await memRes.json());
-                        }
-                    } else if (eventData.type === 'error') {
-                        bubble.textContent = `Error: ${eventData.content}`;
-                    }
-                }
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        if (bubble.innerHTML.includes('fa-spin')) {
-            bubble.textContent = 'Failed to connect to backend server.';
-        } else {
-            bubble.textContent += '\n[Connection lost]';
-        }
-    } finally {
-        chatTextarea.disabled = false;
-        sendMsgBtn.disabled = false;
-        chatTextarea.focus();
+    if (!res.ok) {
+      const err = await res.json();
+      bubble.textContent = `Error: ${err.detail || 'Request failed.'}`;
+      return;
     }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', streamed = '', spinnerGone = false;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const ds = line.slice(6).trim();
+        if (!ds) continue;
+        const ev = JSON.parse(ds);
+
+        if (ev.type === 'chunk') {
+          if (!spinnerGone) { bubble.innerHTML = ''; spinnerGone = true; }
+          streamed += ev.content;
+          bubble.textContent = streamed;
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        } else if (ev.type === 'done') {
+          renderActiveMsgs(ev.active_messages);
+          const memR = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
+          if (memR.ok) renderMemories(await memR.json());
+        } else if (ev.type === 'error') {
+          bubble.textContent = `Error: ${ev.content}`;
+        }
+      }
+    }
+  } catch(e) {
+    console.error(e);
+    bubble.textContent = bubble.innerHTML.includes('fa-spin') ? 'Connection failed.' : bubble.textContent + '\n[Connection lost]';
+  } finally {
+    chatTextarea.disabled = false;
+    sendMsgBtn.disabled = false;
+    chatTextarea.focus();
+  }
 }
 
-async function apiClearChatHistory() {
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/chat/clear/${activeSession}`, {
-            method: 'POST'
-        });
-        if (res.ok) {
-            const data = await res.json();
-            return data.success;
-        }
-    } catch (e) {
-        console.error('Failed to clear chat on backend:', e);
-    }
-    return false;
+async function apiClearChat() {
+  try { const r = await fetch(`${BASE_URL}/api/v1/chat/clear/${activeSession}`, { method:'POST' }); return r.ok && (await r.json()).success; }
+  catch { return false; }
 }
-
-async function apiClearAllMemories() {
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`, {
-            method: 'DELETE'
-        });
-        if (res.ok) {
-            const data = await res.json();
-            return data.success;
-        }
-    } catch (e) {
-        console.error('Failed to clear memories on backend:', e);
-    }
-    return false;
+async function apiClearMemories() {
+  try { const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`, { method:'DELETE' }); return r.ok && (await r.json()).success; }
+  catch { return false; }
 }
-
-async function apiDeleteMemory(memoryId) {
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}/${memoryId}`, {
-            method: 'DELETE'
-        });
-        if (res.ok) {
-            const data = await res.json();
-            return data.success;
-        }
-    } catch (e) {
-        console.error('Failed to delete memory:', e);
-    }
-    return false;
+async function apiDeleteMemory(id) {
+  try { const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}/${id}`, { method:'DELETE' }); return r.ok && (await r.json()).success; }
+  catch { return false; }
 }
-
-async function apiSaveManualMemory(content) {
-    try {
-        const res = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content })
-        });
-        if (res.ok) {
-            const data = await res.json();
-            return data.success;
-        }
-    } catch (e) {
-        console.error('Failed to save manual memory:', e);
-    }
-    return false;
+async function apiSaveMemory(content) {
+  try { const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content}) }); return r.ok && (await r.json()).success; }
+  catch { return false; }
 }
