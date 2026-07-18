@@ -369,6 +369,48 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                                 logger.warning(f"Could not delete pending clarification {pc['id']}: {e}")
 
     # ========================================================
+    # PHASE 1b: Auto-update Conversation Title from Messages
+    # ========================================================
+    # Generate a short title describing what this conversation is about.
+    # Run on every message so it stays fresh as the topic evolves.
+    try:
+        # Build a compact conversation snippet (last 10 turns max)
+        all_msgs = state["messages"]
+        snippet_parts = []
+        for msg in all_msgs[-20:]:
+            if isinstance(msg, HumanMessage):
+                snippet_parts.append(f"User: {msg.content[:200]}")
+            elif isinstance(msg, AIMessage):
+                snippet_parts.append(f"AI: {msg.content[:200]}")
+        conv_snippet = "\n".join(snippet_parts)
+        
+        title_prompt = (
+            "Read the following conversation and generate a short, descriptive title that captures what the conversation is about "
+            "(max 6 words, no quotes, no punctuation at end, like a Gmail subject line).\n\n"
+            f"Conversation:\n{conv_snippet}\n\nTitle:"
+        )
+        try:
+            title_llm = get_llm(provider, model_name, api_key)
+            title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
+            new_title = title_resp.content.strip().strip('"').strip("'").strip()
+        except Exception:
+            groq_key = os.environ.get("GROQ_API_KEY", "")
+            new_title = None
+            if groq_key:
+                try:
+                    title_llm = get_llm("groq", "llama-3.3-70b-versatile", groq_key)
+                    title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
+                    new_title = title_resp.content.strip().strip('"').strip("'").strip()
+                except Exception as te:
+                    logger.warning(f"Groq title generation fallback failed: {te}")
+        if new_title:
+            new_title = new_title[:60]
+            touch_conversation(user_id, conversation_id, title=new_title)
+            logger.info(f"Auto-updated conversation title to: '{new_title}'")
+    except Exception as te:
+        logger.warning(f"Could not auto-update conversation title: {te}")
+
+    # ========================================================
     # PHASE 2: Global Memory Consolidation & Promotion (Every y Messages)
     # ========================================================
     try:
@@ -481,39 +523,8 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     logger.info(f"Saved global pending clarification: {action.clarifying_question}")
             
             # --------------------------------------------------------
-            # Auto-update conversation title from updated global memories
+            # (Title is now generated from conversation messages above)
             # --------------------------------------------------------
-            if global_memory_changed and store is not None:
-                try:
-                    updated_global_items = store.search((user_id, "global"))
-                    updated_global_facts = [item.value["content"] for item in updated_global_items]
-                    if updated_global_facts:
-                        facts_str = "\n".join(f"- {f}" for f in updated_global_facts)
-                        title_prompt = (
-                            "Based on the following user facts stored in long-term memory, "
-                            "generate a short, descriptive conversation title (max 6 words, no quotes, no punctuation at end).\n"
-                            "Focus on the most defining trait or topic about the user.\n\n"
-                            f"Facts:\n{facts_str}\n\nTitle:"
-                        )
-                        try:
-                            title_llm = get_llm(provider, model_name, api_key)
-                            title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
-                            new_title = title_resp.content.strip().strip('"').strip("'").strip()
-                        except Exception:
-                            groq_key = os.environ.get("GROQ_API_KEY", "")
-                            if groq_key:
-                                title_llm = get_llm("groq", "llama-3.3-70b-versatile", groq_key)
-                                title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
-                                new_title = title_resp.content.strip().strip('"').strip("'").strip()
-                            else:
-                                new_title = None
-                        if new_title:
-                            # Truncate to 60 chars safety cap
-                            new_title = new_title[:60]
-                            touch_conversation(user_id, conversation_id, title=new_title)
-                            logger.info(f"Auto-updated conversation '{conversation_id}' title to: '{new_title}'")
-                except Exception as title_err:
-                    logger.warning(f"Could not auto-update conversation title: {title_err}")
                     
     return {}
 
