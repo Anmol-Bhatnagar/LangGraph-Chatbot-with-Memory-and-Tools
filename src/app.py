@@ -13,7 +13,7 @@ from src.api.routers.health import router as health_router
 setup_logging()
 
 app = FastAPI(
-    title="LangGraph Chatbot Memory API",
+    title="LangGraph Chatbot with Long-Term Memory",
     description="Production RESTful API backend for LangGraph Chatbot with Short-Term and Long-Term Memory",
     version="1.0.0"
 )

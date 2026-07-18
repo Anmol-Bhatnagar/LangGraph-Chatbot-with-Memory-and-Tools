@@ -25,7 +25,7 @@ class Settings(BaseModel):
 
 # Instantiate settings singleton
 settings = Settings(
-    APP_NAME=os.getenv("APP_NAME", "LangGraph Chatbot Memory Service"),
+    APP_NAME=os.getenv("APP_NAME", "LangGraph Chatbot with Long-Term Memory"),
     APP_ENV=os.getenv("APP_ENV", "development"),
     APP_PORT=int(os.getenv("APP_PORT", "8000")),
     DB_PATH=os.getenv("DB_PATH", "memories.db"),

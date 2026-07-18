@@ -1,4 +1,4 @@
-# My Agent Service
+# LangGraph Chatbot with Long-Term Memory
 
 Production-ready LangGraph Chatbot Service featuring dynamic Dual Memory (Short-Term Trimming & SQLite-persisted Long-Term Memories) exposed via a restful FastAPI backend and a Streamlit dashboard.
 
