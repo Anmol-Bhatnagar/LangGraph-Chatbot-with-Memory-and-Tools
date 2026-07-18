@@ -8,7 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
  
 from src.agents.state import ChatState
-from src.services.memory import get_memories, save_memory
+from src.services.memory import get_memories, save_memory, touch_conversation
  
 logger = logging.getLogger("AgentNodes")
  
@@ -446,6 +446,7 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     logger.error(f"Groq fallback global memory promotion failed: {fallback_err}")
                     
         if global_extracted and global_extracted.actions:
+            global_memory_changed = False
             for action in global_extracted.actions:
                 act_type = action.action_type.upper()
                 fact = action.fact
@@ -455,6 +456,7 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     memory_id = str(uuid.uuid4())
                     store.put((user_id, "global"), memory_id, {"content": fact})
                     logger.info(f"Promoted new fact to global memory: {fact}")
+                    global_memory_changed = True
                 elif act_type == "UPDATE" and store is not None:
                     if old_id:
                         try:
@@ -464,6 +466,7 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     memory_id = str(uuid.uuid4())
                     store.put((user_id, "global"), memory_id, {"content": fact})
                     logger.info(f"Updated global memory with promoted fact: {fact}")
+                    global_memory_changed = True
                 elif act_type == "ASK_CLARIFICATION" and store is not None:
                     clarification_id = str(uuid.uuid4())
                     store.put(
@@ -476,6 +479,41 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                         }
                     )
                     logger.info(f"Saved global pending clarification: {action.clarifying_question}")
+            
+            # --------------------------------------------------------
+            # Auto-update conversation title from updated global memories
+            # --------------------------------------------------------
+            if global_memory_changed and store is not None:
+                try:
+                    updated_global_items = store.search((user_id, "global"))
+                    updated_global_facts = [item.value["content"] for item in updated_global_items]
+                    if updated_global_facts:
+                        facts_str = "\n".join(f"- {f}" for f in updated_global_facts)
+                        title_prompt = (
+                            "Based on the following user facts stored in long-term memory, "
+                            "generate a short, descriptive conversation title (max 6 words, no quotes, no punctuation at end).\n"
+                            "Focus on the most defining trait or topic about the user.\n\n"
+                            f"Facts:\n{facts_str}\n\nTitle:"
+                        )
+                        try:
+                            title_llm = get_llm(provider, model_name, api_key)
+                            title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
+                            new_title = title_resp.content.strip().strip('"').strip("'").strip()
+                        except Exception:
+                            groq_key = os.environ.get("GROQ_API_KEY", "")
+                            if groq_key:
+                                title_llm = get_llm("groq", "llama-3.3-70b-versatile", groq_key)
+                                title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
+                                new_title = title_resp.content.strip().strip('"').strip("'").strip()
+                            else:
+                                new_title = None
+                        if new_title:
+                            # Truncate to 60 chars safety cap
+                            new_title = new_title[:60]
+                            touch_conversation(user_id, conversation_id, title=new_title)
+                            logger.info(f"Auto-updated conversation '{conversation_id}' title to: '{new_title}'")
+                except Exception as title_err:
+                    logger.warning(f"Could not auto-update conversation title: {title_err}")
                     
     return {}
 
