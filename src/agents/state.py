@@ -8,3 +8,4 @@ class ChatState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     long_term_memories: List[str]
     user_id: str
+    pending_clarifications: List[str]

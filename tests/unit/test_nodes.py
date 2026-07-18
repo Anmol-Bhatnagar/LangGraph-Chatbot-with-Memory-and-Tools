@@ -47,7 +47,10 @@ class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
         
         # mock structured output
         mock_structured = MagicMock()
-        mock_structured.invoke.return_value = MagicMock(new_memories=["User prefers Python"])
+        from src.agents.nodes import MemoryAnalysis, MemoryAction
+        mock_structured.invoke.return_value = MemoryAnalysis(
+            actions=[MemoryAction(action_type="ADD", fact="User prefers Python")]
+        )
         mock_llm.with_structured_output.return_value = mock_structured
         
         state = {

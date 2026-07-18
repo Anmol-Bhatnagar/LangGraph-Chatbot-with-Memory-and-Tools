@@ -1,32 +1,53 @@
 import os
 import logging
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, RemoveMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
-
+ 
 from src.agents.state import ChatState
 from src.services.memory import get_memories, save_memory
-
+ 
 logger = logging.getLogger("AgentNodes")
-
-
+ 
+ 
 # ==========================================
 # 1. Structured Output Schemas
 # ==========================================
-
+ 
 class MemoryExtraction(BaseModel):
     new_memories: List[str] = Field(
         default_factory=list,
         description="Concise facts or preferences worth remembering long-term about the user (e.g. 'User likes dark mode', 'User is a developer'). Ignore casual talk or current conversation states. If nothing new, return an empty list."
     )
-
+ 
 class PrunedMemoryExtraction(BaseModel):
     extracted_knowledge: List[str] = Field(
         default_factory=list,
         description="Key summaries, decisions, or facts from the archived conversation segment to retain in long-term memory. Return an empty list if there's no persistent value in these messages."
+    )
+
+class MemoryAction(BaseModel):
+    action_type: str = Field(
+        ...,
+        description="Type of action: 'ADD' (new memory), 'UPDATE' (replace/update a conflicting memory), 'NO_OP' (duplicate or irrelevant fact), 'ASK_CLARIFICATION' (conflict requiring user confirmation)"
+    )
+    fact: str = Field(..., description="The fact or preference statement to store.")
+    existing_memory_id: Optional[str] = Field(
+        None,
+        description="The ID of the conflicting or existing memory to update/clarify."
+    )
+    clarifying_question: Optional[str] = Field(
+        None,
+        description="The clarifying question to ask the user if action_type is 'ASK_CLARIFICATION'."
+    )
+
+class MemoryAnalysis(BaseModel):
+    actions: List[MemoryAction] = Field(
+        default_factory=list,
+        description="List of memory updates, conflict resolutions, and clarifications."
     )
 
 
@@ -85,18 +106,26 @@ def load_prompt_template(filename: str) -> str:
 # ==========================================
 
 def load_memories_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
-    """Retrieve long-term memories from LangGraph store and add to the graph state."""
+    """Retrieve long-term memories and pending clarifications from LangGraph store."""
     user_id = state.get("user_id", "default_user")
+    pending_questions = []
     if store is not None:
         memories_items = store.search((user_id,))
         memories_text = [item.value["content"] for item in memories_items]
+        
+        # Load pending clarifications
+        clarifications = store.search(("pending_clarifications", user_id))
+        pending_questions = [c.value["question"] for c in clarifications]
     else:
         memories_list = get_memories(user_id)
         memories_text = [m["content"] for m in memories_list]
-    return {"long_term_memories": memories_text}
+    return {
+        "long_term_memories": memories_text,
+        "pending_clarifications": pending_questions
+    }
 
 async def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
-    """Invoke the LLM using message history and the loaded long-term memories with real-time streaming."""
+    """Invoke the LLM using message history, long-term memories, and pending clarifications with real-time streaming."""
     configurable = config.get("configurable", {})
     provider = configurable.get("provider", "google")
     model_name = configurable.get("model", "gemini-2.5-flash")
@@ -120,6 +149,16 @@ async def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
         system_instruction = (
             "You are a helpful and intelligent chatbot with short-term and long-term memory capabilities.\n"
             "Currently, there is no prior long-term memory recorded about the user."
+        )
+        
+    # Append pending clarifications if any
+    pending = state.get("pending_clarifications", [])
+    if pending:
+        pending_bullet = "\n".join([f"- {q}" for q in pending])
+        system_instruction += (
+            "\n\nCRITICAL: There is a pending clarification you need to ask the user to resolve conflicting information in their memory profile:\n"
+            f"{pending_bullet}\n"
+            "You MUST ask the user this clarifying question naturally as part of your response to resolve the conflict."
         )
         
     messages = [SystemMessage(content=system_instruction)] + state["messages"]
@@ -150,7 +189,7 @@ async def chatbot_node(state: ChatState, config: RunnableConfig) -> dict:
     return {"messages": [response]}
 
 def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
-    """Use the LLM to decide what facts from the latest human-AI exchange to save to SQLite and LangGraph store."""
+    """Use the LLM to decide what facts from the latest human-AI exchange to save, update, or clarify in the store."""
     configurable = config.get("configurable", {})
     provider = configurable.get("provider", "google")
     model_name = configurable.get("model", "gemini-2.5-flash")
@@ -175,20 +214,63 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
     if not last_human_msg or not last_ai_msg:
         return {}
         
+    # Retrieve existing memories
+    existing_mems = []
+    if store is not None:
+        try:
+            existing_items = store.search((user_id,))
+            existing_mems = [{"id": item.key, "content": item.value["content"]} for item in existing_items]
+        except Exception as e:
+            logger.error(f"Error loading existing memories for analysis: {e}")
+    else:
+        existing_mems = get_memories(user_id)
+        
+    memories_formatted = "\n".join([f"ID: {m['id']} - content: '{m['content']}'" for m in existing_mems])
+    
+    # Retrieve pending clarifications
+    pending_clarifications = []
+    if store is not None:
+        try:
+            clarifications = store.search(("pending_clarifications", user_id))
+            pending_clarifications = [
+                {
+                    "id": c.key,
+                    "question": c.value.get("question"),
+                    "new_fact": c.value.get("new_fact"),
+                    "old_fact_id": c.value.get("old_fact_id")
+                }
+                for c in clarifications
+            ]
+        except Exception as e:
+            logger.error(f"Error loading pending clarifications for analysis: {e}")
+            
+    pending_formatted = "\n".join([
+        f"Clarification ID: {pc['id']} - question: '{pc['question']}', new_fact: '{pc['new_fact']}', old_fact_id: '{pc['old_fact_id']}'"
+        for pc in pending_clarifications
+    ])
+    
     analysis_prompt = (
-        "Analyze the following conversation turn between the User and the AI.\n"
-        "Identify if the user shared any persistent facts, preferences, or important biographical info "
-        "worth remembering long-term (e.g. user name, user job, favorite food, specific preferences).\n"
-        "Ignore short-term topics, greetings, or questions.\n\n"
+        "Analyze the following conversation turn between the User and the AI to identify persistent facts worth remembering long-term (e.g., user name, job, college, preferences).\n"
+        "Here are the user's EXISTING long-term memories:\n"
+        f"{memories_formatted or 'No existing memories.'}\n\n"
+        "Here are the PENDING clarifications currently being asked to the user:\n"
+        f"{pending_formatted or 'No pending clarifications.'}\n\n"
+        f"Latest turn:\n"
         f"User: {last_human_msg}\n"
         f"AI: {last_ai_msg}\n\n"
-        "Extract new facts to remember as concise statements."
+        "For any candidate facts, decide what actions to take. Output a list of actions matching the schema:\n"
+        "Choose action_type from:\n"
+        "- 'NO_OP': The fact is already present (duplicate) or is not a persistent fact.\n"
+        "- 'ADD': This is a new fact with no contradictions to existing memories.\n"
+        "- 'UPDATE': This is a direct correction/progression of a conflicting existing memory (e.g. 2nd year -> 3rd year). You must provide the existing_memory_id of the old memory to replace/delete.\n"
+        "- 'ASK_CLARIFICATION': There is a conflict/contradiction with an existing memory that is unclear (e.g. user says they are XYZ, but memory says Anmol). Do not update yet. Provide the existing_memory_id and a polite, natural clarifying_question to ask the user.\n\n"
+        "Additionally, check if the user has answered any of the PENDING clarifications. If they did, output an 'UPDATE' action to apply the chosen fact (using the pending clarification's old_fact_id as the existing_memory_id) and we will resolve it."
     )
     
     extracted = None
     try:
         llm = get_llm(provider, model_name, api_key)
-        structured_llm = llm.with_structured_output(MemoryExtraction)
+        structured_llm = llm.with_structured_output(MemoryAnalysis)
         extracted = structured_llm.invoke([HumanMessage(content=analysis_prompt)])
     except Exception as e:
         logger.warning(f"Memory extraction failed with primary provider '{provider}': {e}. Trying Groq fallback...")
@@ -196,20 +278,71 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
         if provider != "groq" and groq_api_key:
             try:
                 llm = get_llm("groq", "llama-3.3-70b-versatile", groq_api_key)
-                structured_llm = llm.with_structured_output(MemoryExtraction)
+                structured_llm = llm.with_structured_output(MemoryAnalysis)
                 extracted = structured_llm.invoke([HumanMessage(content=analysis_prompt)])
             except Exception as fallback_err:
                 logger.error(f"Groq fallback memory extraction failed: {fallback_err}")
         else:
             logger.error(f"Memory extraction failed completely: {e}")
             
-    if extracted:
-        new_facts = extracted.new_memories
-        for fact in new_facts:
-            memory_id = save_memory(user_id, fact)
-            if store is not None:
-                store.put((user_id,), str(memory_id), {"content": fact})
-        
+    if extracted and extracted.actions:
+        import uuid
+        for action in extracted.actions:
+            act_type = action.action_type.upper()
+            fact = action.fact
+            old_id = action.existing_memory_id
+            
+            if act_type == "ADD":
+                if store is not None:
+                    memory_id = str(uuid.uuid4())
+                    store.put((user_id,), memory_id, {"content": fact})
+                    logger.info(f"Added new memory via store: {fact}")
+                else:
+                    save_memory(user_id, fact)
+                    
+            elif act_type == "UPDATE":
+                if store is not None:
+                    if old_id:
+                        try:
+                            store.delete((user_id,), old_id)
+                            logger.info(f"Deleted old memory ID {old_id} due to update.")
+                        except Exception as e:
+                            logger.warning(f"Could not delete old memory {old_id}: {e}")
+                    memory_id = str(uuid.uuid4())
+                    store.put((user_id,), memory_id, {"content": fact})
+                    logger.info(f"Updated memory via store: {fact}")
+                else:
+                    if old_id:
+                        from src.services.memory import delete_memory
+                        delete_memory(user_id, old_id)
+                    save_memory(user_id, fact)
+                    
+            elif act_type == "ASK_CLARIFICATION":
+                if store is not None:
+                    clarification_id = str(uuid.uuid4())
+                    store.put(
+                        ("pending_clarifications", user_id),
+                        clarification_id,
+                        {
+                            "question": action.clarifying_question,
+                            "new_fact": fact,
+                            "old_fact_id": old_id
+                        }
+                    )
+                    logger.info(f"Saved pending clarification: {action.clarifying_question}")
+                    
+        # Clean up pending clarifications that have been resolved
+        if store is not None:
+            for action in extracted.actions:
+                if action.action_type.upper() in ("UPDATE", "NO_OP", "ADD") and action.existing_memory_id:
+                    for pc in pending_clarifications:
+                        if pc["old_fact_id"] == action.existing_memory_id or pc["new_fact"] == action.fact:
+                            try:
+                                store.delete(("pending_clarifications", user_id), pc["id"])
+                                logger.info(f"Cleared pending clarification ID {pc['id']} (resolved).")
+                            except Exception as e:
+                                logger.warning(f"Could not delete pending clarification {pc['id']}: {e}")
+                                
     return {}
 
 def trim_history_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:
