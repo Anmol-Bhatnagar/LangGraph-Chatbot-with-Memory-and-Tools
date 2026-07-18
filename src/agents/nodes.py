@@ -42,7 +42,8 @@ def get_llm(provider: str, model_name: str, api_key: str):
         return ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.7
+            temperature=0.7,
+            max_retries=1
         )
     elif provider == "groq":
         g_key = api_key or os.environ.get("GROQ_API_KEY", "")
@@ -52,7 +53,8 @@ def get_llm(provider: str, model_name: str, api_key: str):
         return ChatGroq(
             model=model_name,
             api_key=g_key,
-            temperature=0.7
+            temperature=0.7,
+            max_retries=1
         )
     elif provider == "openai":
         if not api_key:
@@ -60,7 +62,8 @@ def get_llm(provider: str, model_name: str, api_key: str):
         return ChatOpenAI(
             model=model_name,
             api_key=api_key,
-            temperature=0.7
+            temperature=0.7,
+            max_retries=1
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")

@@ -3,7 +3,7 @@ import json
 import uuid
 import logging
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
 from src.config.settings import settings
@@ -16,7 +16,7 @@ from src.api.schemas.chat import (
     MemorySchema,
     GenericResponse
 )
-from src.agents.graph import chatbot_app
+from src.agents.graph import chatbot_app, memory_app
 from src.services.memory import (
     load_chat_history,
     save_chat_history,
@@ -32,8 +32,26 @@ logger = logging.getLogger("ChatRouter")
 
 router = APIRouter(prefix="/api/v1")
 
+def run_background_memory_tasks(user_id: str, messages: list, config: dict):
+    """Run memory extraction and history trimming in the background, updating SQLite."""
+    try:
+        logger.info(f"Starting background memory extraction/trimming for user '{user_id}'...")
+        result = memory_app.invoke(
+            {
+                "messages": messages,
+                "user_id": user_id
+            },
+            config=config
+        )
+        # Save pruned history to SQLite if anything was changed/removed
+        updated_messages = result.get("messages", [])
+        save_chat_history(user_id, updated_messages)
+        logger.info(f"Completed background memory extraction/trimming for user '{user_id}'.")
+    except Exception as e:
+        logger.error(f"Error in background memory tasks for user '{user_id}': {e}")
+
 @router.post("/chat", response_model=ChatResponse, tags=["Chat"])
-def chat(request: ChatRequest, token: str = Depends(verify_api_token)):
+def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: str = Depends(verify_api_token)):
     """Submit a user message to the chatbot.
     
     Loads history from SQLite, runs the LangGraph compiled graph (updating memory and trimming if needed),
@@ -104,6 +122,14 @@ def chat(request: ChatRequest, token: str = Depends(verify_api_token)):
             elif isinstance(msg, AIMessage):
                 active_messages_response.append(MessageSchema(role="assistant", content=msg.content, id=getattr(msg, "id", None)))
                 
+        # 8. Queue background memory extraction and trimming
+        background_tasks.add_task(
+            run_background_memory_tasks,
+            user_id=user_id,
+            messages=updated_messages,
+            config=config
+        )
+        
         return ChatResponse(
             response=ai_reply,
             active_messages=active_messages_response,
@@ -118,7 +144,7 @@ def chat(request: ChatRequest, token: str = Depends(verify_api_token)):
         )
 
 @router.post("/chat/stream", tags=["Chat"])
-async def chat_stream(request: ChatRequest, token: str = Depends(verify_api_token)):
+async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, token: str = Depends(verify_api_token)):
     """Submit a user message and stream the chatbot reply token-by-token.
     
     Uses Server-Sent Events (SSE) to send chunks to the client in real-time,
@@ -205,6 +231,14 @@ async def chat_stream(request: ChatRequest, token: str = Depends(verify_api_toke
                             "content": msg.content,
                             "id": getattr(msg, "id", None)
                         })
+                
+                # 6. Queue background memory extraction and trimming
+                background_tasks.add_task(
+                    run_background_memory_tasks,
+                    user_id=user_id,
+                    messages=updated_messages,
+                    config=config
+                )
                         
                 yield f"data: {json.dumps({
                     'type': 'done',
@@ -219,7 +253,15 @@ async def chat_stream(request: ChatRequest, token: str = Depends(verify_api_toke
             logger.error(f"Error in chat_stream event generator: {e}")
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
             
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @router.get("/memories/{user_id}", response_model=List[MemorySchema], tags=["Memories"])
 def get_user_memories(user_id: str):
