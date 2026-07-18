@@ -22,6 +22,9 @@ class Settings(BaseModel):
     LANGCHAIN_TRACING_V2: bool = Field(default=False)
     LANGCHAIN_API_KEY: Optional[str] = Field(default=None)
     LANGCHAIN_PROJECT: str = Field(default="my-agent-service")
+    
+    # Global memory consolidation frequency (number of chats)
+    GLOBAL_MEMORY_FREQUENCY: int = Field(default=5)
 
 # Instantiate settings singleton
 settings = Settings(
@@ -35,5 +38,6 @@ settings = Settings(
     OPENAI_API_KEY=os.getenv("OPENAI_API_KEY"),
     LANGCHAIN_TRACING_V2=os.getenv("LANGCHAIN_TRACING_V2", "false").lower() in ("true", "1", "yes"),
     LANGCHAIN_API_KEY=os.getenv("LANGCHAIN_API_KEY"),
-    LANGCHAIN_PROJECT=os.getenv("LANGCHAIN_PROJECT", "my-agent-service")
+    LANGCHAIN_PROJECT=os.getenv("LANGCHAIN_PROJECT", "my-agent-service"),
+    GLOBAL_MEMORY_FREQUENCY=int(os.getenv("GLOBAL_MEMORY_FREQUENCY", "5"))
 )

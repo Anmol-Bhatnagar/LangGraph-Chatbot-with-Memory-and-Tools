@@ -58,7 +58,8 @@ class TestAPIEndpoints(unittest.TestCase):
             "provider": "google",
             "model": "gemini-2.5-flash",
             "api_key": "mock_key",
-            "limit": 4
+            "limit": 4,
+            "global_memory_frequency": 1
         }
         res = self.client.post("/api/v1/chat", json=chat_payload)
         self.assertEqual(res.status_code, 200)
@@ -117,7 +118,8 @@ class TestAPIEndpoints(unittest.TestCase):
             "message": "This is message A",
             "provider": "google",
             "model": "gemini-2.5-flash",
-            "api_key": "mock_key"
+            "api_key": "mock_key",
+            "global_memory_frequency": 1
         }
         res = self.client.post("/api/v1/chat", json=chat_payload_a)
         self.assertEqual(res.status_code, 200)
@@ -129,7 +131,8 @@ class TestAPIEndpoints(unittest.TestCase):
             "message": "This is message B",
             "provider": "google",
             "model": "gemini-2.5-flash",
-            "api_key": "mock_key"
+            "api_key": "mock_key",
+            "global_memory_frequency": 1
         }
         res = self.client.post("/api/v1/chat", json=chat_payload_b)
         self.assertEqual(res.status_code, 200)
@@ -180,7 +183,8 @@ class TestAPIEndpoints(unittest.TestCase):
                 HumanMessage(content="My name is Bob.", id="h1"),
                 AIMessage(content="Hello Bob!", id="ai1")
             ],
-            "long_term_memories": [],
+            "global_memories": [],
+            "conversation_memories": [],
             "pending_clarifications": []
         }
         mock_structured_extract.invoke.return_value = MemoryAnalysis(
@@ -189,8 +193,8 @@ class TestAPIEndpoints(unittest.TestCase):
         
         extract_memory_node(state, {}, store=store)
         
-        # Verify it was added to the store
-        mems = store.search((self.user_id,))
+        # Verify it was added to the store (local memory)
+        mems = store.search((self.user_id, "conversation", "default_conversation"))
         self.assertEqual(len(mems), 1)
         bob_mem_id = mems[0].key
         self.assertEqual(mems[0].value["content"], "User's name is Bob")
@@ -200,11 +204,11 @@ class TestAPIEndpoints(unittest.TestCase):
             actions=[MemoryAction(action_type="NO_OP", fact="User's name is Bob", existing_memory_id=bob_mem_id)]
         )
         extract_memory_node(state, {}, store=store)
-        mems = store.search((self.user_id,))
+        mems = store.search((self.user_id, "conversation", "default_conversation"))
         self.assertEqual(len(mems), 1) # Still 1 memory (no duplicates)
         
         # Test Case 3: UPDATE (Direct progression update)
-        store.put((self.user_id,), "year_mem", {"content": "User is in 2nd year of college"})
+        store.put((self.user_id, "conversation", "default_conversation"), "year_mem", {"content": "User is in 2nd year of college"})
         
         state_update = {
             "user_id": self.user_id,
@@ -212,7 +216,8 @@ class TestAPIEndpoints(unittest.TestCase):
                 HumanMessage(content="I am in 3rd year now.", id="h2"),
                 AIMessage(content="Got it, updated your year!", id="ai2")
             ],
-            "long_term_memories": ["User is in 2nd year of college"],
+            "global_memories": [],
+            "conversation_memories": ["User is in 2nd year of college"],
             "pending_clarifications": []
         }
         
@@ -227,9 +232,9 @@ class TestAPIEndpoints(unittest.TestCase):
         )
         extract_memory_node(state_update, {}, store=store)
         
-        # Verify "year_mem" was deleted and new year was saved
-        mems = store.search((self.user_id,))
-        self.assertEqual(len(mems), 2) # Bob name + 3rd year
+        # Verify "year_mem" was deleted and new year was saved (total 2: Bob + 3rd year)
+        mems = store.search((self.user_id, "conversation", "default_conversation"))
+        self.assertEqual(len(mems), 2)
         contents = [m.value["content"] for m in mems]
         self.assertIn("User is in 3rd year of college", contents)
         self.assertNotIn("User is in 2nd year of college", contents)
@@ -255,3 +260,18 @@ class TestAPIEndpoints(unittest.TestCase):
         # Verify that load_memories_node loads it
         res = load_memories_node({"user_id": self.user_id}, {}, store=store)
         self.assertIn("You mentioned earlier your name is Bob, but now you said XYZ. Which one should I use?", res["pending_clarifications"])
+
+        # Test Case 5: Global consolidation & promotion
+        from src.services.memory import save_chat_history
+        save_chat_history(self.user_id, [HumanMessage(content="Hello", id="h_promo")], conversation_id="default_conversation")
+        
+        config_promo = {"configurable": {"global_memory_frequency": 1}}
+        mock_structured_extract.invoke.return_value = MemoryAnalysis(
+            actions=[MemoryAction(action_type="ADD", fact="User loves coding in Python")]
+        )
+        extract_memory_node(state, config_promo, store=store)
+        
+        # Verify it was promoted to global namespace in the store
+        global_mems = store.search((self.user_id, "global"))
+        self.assertEqual(len(global_mems), 1)
+        self.assertEqual(global_mems[0].value["content"], "User loves coding in Python")

@@ -106,7 +106,9 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: s
                 "provider": request.provider,
                 "model": request.model,
                 "api_key": api_key,
-                "limit": request.limit
+                "limit": request.limit,
+                "conversation_id": conversation_id,
+                "global_memory_frequency": request.global_memory_frequency
             }
         }
         
@@ -152,7 +154,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, token: s
         return ChatResponse(
             response=ai_reply,
             active_messages=active_messages_response,
-            long_term_memories=result.get("long_term_memories", [])
+            long_term_memories=result.get("global_memories", [])
         )
         
     except Exception as e:
@@ -214,7 +216,9 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
                     "provider": request.provider,
                     "model": request.model,
                     "api_key": api_key,
-                    "limit": request.limit
+                    "limit": request.limit,
+                    "conversation_id": conversation_id,
+                    "global_memory_frequency": request.global_memory_frequency
                 }
             }
             
@@ -277,7 +281,7 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
                     'type': 'done',
                     'response': ai_reply,
                     'active_messages': active_messages_response,
-                    'long_term_memories': final_output.get('long_term_memories', [])
+                    'long_term_memories': final_output.get('global_memories', [])
                 })}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'error', 'content': 'LangGraph execution did not produce final state.'})}\n\n"
@@ -298,8 +302,53 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, t
 
 @router.get("/memories/{user_id}", response_model=List[MemorySchema], tags=["Memories"])
 def get_user_memories(user_id: str):
-    """Retrieve all stored long-term memories for a user."""
-    return get_memories(user_id)
+    """Retrieve all stored global long-term memories for a user."""
+    from src.agents.graph import store
+    from datetime import datetime
+    if store is not None:
+        try:
+            items = store.search((user_id, "global"))
+            return [
+                MemorySchema(
+                    id=item.key,
+                    content=item.value["content"],
+                    created_at=item.created_at.isoformat() if getattr(item, "created_at", None) else datetime.now().isoformat()
+                )
+                for item in items
+            ]
+        except Exception as e:
+            logger.error(f"Error getting global memories: {e}")
+    mems = get_memories(user_id)
+    from datetime import datetime
+    return [
+        MemorySchema(
+            id=m["id"],
+            content=m["content"],
+            created_at=m.get("created_at") or datetime.now().isoformat()
+        )
+        for m in mems
+    ]
+
+@router.get("/memories/{user_id}/conversation/{conversation_id}", response_model=List[MemorySchema], tags=["Memories"])
+def get_user_conversation_memories(user_id: str, conversation_id: str):
+    """Retrieve all stored conversation-local long-term memories for a user and conversation."""
+    from src.agents.graph import store
+    from datetime import datetime
+    if store is not None:
+        try:
+            items = store.search((user_id, "conversation", conversation_id))
+            return [
+                MemorySchema(
+                    id=item.key,
+                    content=item.value["content"],
+                    created_at=item.created_at.isoformat() if getattr(item, "created_at", None) else datetime.now().isoformat()
+                )
+                for item in items
+            ]
+        except Exception as e:
+            logger.error(f"Error getting conversation memories: {e}")
+            return []
+    return []
 
 @router.post("/memories/{user_id}", response_model=GenericResponse, tags=["Memories"])
 def create_user_memory(user_id: str, request: MemoryRequest):

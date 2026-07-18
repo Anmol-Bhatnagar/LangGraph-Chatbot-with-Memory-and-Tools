@@ -258,20 +258,29 @@ def delete_memory(user_id: str, memory_id: str) -> bool:
     """Delete a memory string from LangGraph store by its key for a user."""
     try:
         from src.agents.graph import store
-        store.delete((user_id,), memory_id)
-        logger.info(f"Deleted memory {memory_id} from LangGraph store for user '{user_id}'")
-        return True
+        items = store.search((user_id,))
+        for item in items:
+            if item.key == memory_id:
+                store.delete(item.namespace, item.key)
+                logger.info(f"Deleted memory {memory_id} from LangGraph store namespace {item.namespace}")
+                return True
+        return False
     except Exception as e:
         logger.error(f"Error deleting memory: {e}")
         return False
 
 def clear_all_memories(user_id: str) -> bool:
-    """Delete all memories for a user from LangGraph store."""
+    """Delete all memories for a user from LangGraph store (including global, local, and clarifications)."""
     try:
         from src.agents.graph import store
+        # Search global and local namespaces under prefix (user_id,)
         items = store.search((user_id,))
         for item in items:
-            store.delete((user_id,), item.key)
+            store.delete(item.namespace, item.key)
+        # Also clear pending clarifications
+        clarifications = store.search(("pending_clarifications", user_id))
+        for c in clarifications:
+            store.delete(("pending_clarifications", user_id), c.key)
         logger.info(f"Cleared all memories from LangGraph store for user '{user_id}'")
         return True
     except Exception as e:

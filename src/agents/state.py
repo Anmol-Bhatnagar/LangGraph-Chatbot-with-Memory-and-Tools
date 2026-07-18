@@ -6,6 +6,7 @@ from langgraph.graph.message import add_messages
 class ChatState(TypedDict):
     """LangGraph State representing the chatbot conversation state."""
     messages: Annotated[List[BaseMessage], add_messages]
-    long_term_memories: List[str]
+    global_memories: List[str]
+    conversation_memories: List[str]
     user_id: str
     pending_clarifications: List[str]

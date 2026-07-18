@@ -16,9 +16,10 @@ class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
         clear_all_memories("test_user_node")
         
     def test_load_memories_node(self):
-        state = {"user_id": "test_user_node", "messages": [], "long_term_memories": []}
+        state = {"user_id": "test_user_node", "messages": [], "global_memories": [], "conversation_memories": []}
         res = load_memories_node(state, {})
-        self.assertEqual(res["long_term_memories"], [])
+        self.assertEqual(res["global_memories"], [])
+        self.assertEqual(res["conversation_memories"], [])
         
     @patch("src.agents.nodes.get_llm")
     async def test_chatbot_node(self, mock_get_llm):
@@ -34,7 +35,8 @@ class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
         state = {
             "user_id": "test_user_node",
             "messages": [HumanMessage(content="Hi", id="h1")],
-            "long_term_memories": []
+            "global_memories": [],
+            "conversation_memories": []
         }
         res = await chatbot_node(state, {})
         self.assertEqual(len(res["messages"]), 1)
@@ -59,7 +61,8 @@ class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
                 HumanMessage(content="I write python code.", id="h1"),
                 AIMessage(content="Awesome, python is great!", id="ai1")
             ],
-            "long_term_memories": []
+            "global_memories": [],
+            "conversation_memories": []
         }
         extract_memory_node(state, {})
         
@@ -86,7 +89,8 @@ class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
                 AIMessage(content="Good!", id="msg_4"),
                 HumanMessage(content="What's up?", id="msg_5")
             ],
-            "long_term_memories": []
+            "global_memories": [],
+            "conversation_memories": []
         }
         # Configure limit = 3 messages, which will trigger pruning of 2 messages
         config = {"configurable": {"limit": 3}}

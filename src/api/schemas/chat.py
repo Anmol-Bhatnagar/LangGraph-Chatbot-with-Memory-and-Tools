@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
     model: str = Field("gemini-2.0-flash", description="Model name to run in the backend.")
     api_key: Optional[str] = Field(default=None, description="API key for the selected provider. If not provided, fallback to server environment variables.")
     limit: int = Field(6, description="Short-term message limit before trimming.")
+    global_memory_frequency: int = Field(5, description="Number of chats before global memory consolidation/promotion runs.")
 
 class MessageSchema(BaseModel):
     role: str
