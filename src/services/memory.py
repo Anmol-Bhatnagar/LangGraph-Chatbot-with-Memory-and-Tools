@@ -60,6 +60,13 @@ def init_db():
             logger.info("Migrating chat_history table: adding conversation_id column...")
             cursor.execute("ALTER TABLE chat_history ADD COLUMN conversation_id TEXT DEFAULT 'default_conversation'")
             
+        # Check if msg_count_since_update column exists in conversations
+        cursor.execute("PRAGMA table_info(conversations)")
+        conv_columns = [info[1] for info in cursor.fetchall()]
+        if "msg_count_since_update" not in conv_columns:
+            logger.info("Migrating conversations table: adding msg_count_since_update column...")
+            cursor.execute("ALTER TABLE conversations ADD COLUMN msg_count_since_update INTEGER DEFAULT 0")
+            
         conn.commit()
         conn.close()
         logger.info(f"SQLite database initialized successfully at: {settings.DB_PATH}")

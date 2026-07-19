@@ -368,71 +368,80 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                             except Exception as e:
                                 logger.warning(f"Could not delete pending clarification {pc['id']}: {e}")
 
-    # ========================================================
-    # PHASE 1b: Auto-update Conversation Title from Messages
-    # ========================================================
-    # Generate a short title describing what this conversation is about.
-    # Run on every message so it stays fresh as the topic evolves.
-    try:
-        # Build a compact conversation snippet (last 10 turns max)
-        all_msgs = state["messages"]
-        snippet_parts = []
-        for msg in all_msgs[-20:]:
-            if isinstance(msg, HumanMessage):
-                snippet_parts.append(f"User: {msg.content[:200]}")
-            elif isinstance(msg, AIMessage):
-                snippet_parts.append(f"AI: {msg.content[:200]}")
-        conv_snippet = "\n".join(snippet_parts)
-        
-        title_prompt = (
-            "Read the following conversation and generate a short, descriptive title that captures what the conversation is about "
-            "(max 6 words, no quotes, no punctuation at end, like a Gmail subject line).\n\n"
-            f"Conversation:\n{conv_snippet}\n\nTitle:"
-        )
-        try:
-            title_llm = get_llm(provider, model_name, api_key)
-            title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
-            new_title = title_resp.content.strip().strip('"').strip("'").strip()
-        except Exception:
-            groq_key = os.environ.get("GROQ_API_KEY", "")
-            new_title = None
-            if groq_key:
-                try:
-                    title_llm = get_llm("groq", "llama-3.3-70b-versatile", groq_key)
-                    title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
-                    new_title = title_resp.content.strip().strip('"').strip("'").strip()
-                except Exception as te:
-                    logger.warning(f"Groq title generation fallback failed: {te}")
-        if new_title:
-            new_title = new_title[:60]
-            touch_conversation(user_id, conversation_id, title=new_title)
-            logger.info(f"Auto-updated conversation title to: '{new_title}'")
-    except Exception as te:
-        logger.warning(f"Could not auto-update conversation title: {te}")
-
-    # ========================================================
-    # PHASE 2: Global Memory Consolidation & Promotion (Every y Messages)
-    # ========================================================
+    # Increment counter of user messages sent in this conversation since the last update
+    current_counter = 0
     try:
         from src.services.memory import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT COUNT(*) FROM chat_history WHERE user_id = ? AND conversation_id = ? AND role = 'human'",
-            (user_id, conversation_id)
-        )
-        user_message_count = cursor.fetchone()[0]
+        
+        # Check if row exists in conversations
+        cursor.execute("SELECT 1 FROM conversations WHERE id = ? AND user_id = ?", (conversation_id, user_id))
+        if not cursor.fetchone():
+            cursor.execute(
+                "INSERT INTO conversations (id, user_id, title, msg_count_since_update) VALUES (?, ?, ?, ?)",
+                (conversation_id, user_id, "New Conversation", 1)
+            )
+            current_counter = 1
+        else:
+            cursor.execute(
+                "UPDATE conversations SET msg_count_since_update = msg_count_since_update + 1 WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id)
+            )
+            cursor.execute(
+                "SELECT msg_count_since_update FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id)
+            )
+            current_counter = cursor.fetchone()[0]
+            
+        conn.commit()
         conn.close()
     except Exception as e:
-        logger.error(f"Error counting messages in SQLite: {e}")
-        user_message_count = 0
-        
-    logger.info(f"Message count for promotion check: {user_message_count} (frequency: {global_freq})")
+        logger.error(f"Error updating message counter: {e}")
+
+    logger.info(f"Message counter since last update/start for conv '{conversation_id}': {current_counter} (frequency: {global_freq})")
     
-    if user_message_count > 0 and user_message_count % global_freq == 0:
-        logger.info(f"Triggering global memory consolidation for user '{user_id}'...")
+    if current_counter >= global_freq:
+        logger.info(f"Triggering global memory consolidation & title update (reached threshold {global_freq})")
         
-        # Load global memories
+        # 1. Update Title based on actual conversation topic
+        try:
+            all_msgs = state["messages"]
+            snippet_parts = []
+            for msg in all_msgs[-20:]:
+                if isinstance(msg, HumanMessage):
+                    snippet_parts.append(f"User: {msg.content[:200]}")
+                elif isinstance(msg, AIMessage):
+                    snippet_parts.append(f"AI: {msg.content[:200]}")
+            conv_snippet = "\n".join(snippet_parts)
+            
+            title_prompt = (
+                "Read the following conversation and generate a short, descriptive title that captures what the conversation is about "
+                "(max 6 words, no quotes, no punctuation at end, like a Gmail subject line).\n\n"
+                f"Conversation:\n{conv_snippet}\n\nTitle:"
+            )
+            try:
+                title_llm = get_llm(provider, model_name, api_key)
+                title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
+                new_title = title_resp.content.strip().strip('"').strip("'").strip()
+            except Exception:
+                groq_key = os.environ.get("GROQ_API_KEY", "")
+                new_title = None
+                if groq_key:
+                    try:
+                        title_llm = get_llm("groq", "llama-3.3-70b-versatile", groq_key)
+                        title_resp = title_llm.invoke([HumanMessage(content=title_prompt)])
+                        new_title = title_resp.content.strip().strip('"').strip("'").strip()
+                    except Exception as te:
+                        logger.warning(f"Groq title generation fallback failed: {te}")
+            if new_title:
+                new_title = new_title[:60]
+                touch_conversation(user_id, conversation_id, title=new_title)
+                logger.info(f"Auto-updated conversation title to: '{new_title}'")
+        except Exception as te:
+            logger.warning(f"Could not auto-update conversation title: {te}")
+
+        # 2. Consolidate local memories to global long-term memory
         global_mems = []
         if store is not None:
             try:
@@ -441,7 +450,6 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
             except Exception as e:
                 logger.error(f"Error loading global memories for consolidation: {e}")
                 
-        # Reload updated local memories
         local_mems = []
         if store is not None:
             try:
@@ -488,7 +496,6 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     logger.error(f"Groq fallback global memory promotion failed: {fallback_err}")
                     
         if global_extracted and global_extracted.actions:
-            global_memory_changed = False
             for action in global_extracted.actions:
                 act_type = action.action_type.upper()
                 fact = action.fact
@@ -498,7 +505,6 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     memory_id = str(uuid.uuid4())
                     store.put((user_id, "global"), memory_id, {"content": fact})
                     logger.info(f"Promoted new fact to global memory: {fact}")
-                    global_memory_changed = True
                 elif act_type == "UPDATE" and store is not None:
                     if old_id:
                         try:
@@ -508,7 +514,6 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                     memory_id = str(uuid.uuid4())
                     store.put((user_id, "global"), memory_id, {"content": fact})
                     logger.info(f"Updated global memory with promoted fact: {fact}")
-                    global_memory_changed = True
                 elif act_type == "ASK_CLARIFICATION" and store is not None:
                     clarification_id = str(uuid.uuid4())
                     store.put(
@@ -521,11 +526,21 @@ def extract_memory_node(state: ChatState, config: RunnableConfig, *, store=None)
                         }
                     )
                     logger.info(f"Saved global pending clarification: {action.clarifying_question}")
-            
-            # --------------------------------------------------------
-            # (Title is now generated from conversation messages above)
-            # --------------------------------------------------------
                     
+        # Reset counter in database
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE conversations SET msg_count_since_update = 0 WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id)
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"Reset message counter to 0 for conv '{conversation_id}'")
+        except Exception as e:
+            logger.error(f"Error resetting message counter: {e}")
+            
     return {}
 
 def trim_history_node(state: ChatState, config: RunnableConfig, *, store=None) -> dict:

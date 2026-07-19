@@ -98,3 +98,70 @@ class TestGraphNodes(unittest.IsolatedAsyncioTestCase):
         
         self.assertEqual(len(res["messages"]), 2) # Returns 2 RemoveMessage instances
         self.assertTrue(all(m.id in ["msg_1", "msg_2"] for m in res["messages"]))
+
+    @patch("src.agents.nodes.get_llm")
+    def test_message_counter_frequency_trigger(self, mock_get_llm):
+        import uuid
+        conv_id = f"test_conv_freq_{uuid.uuid4().hex[:6]}"
+
+        mock_llm = MagicMock()
+        mock_get_llm.return_value = mock_llm
+        mock_structured = MagicMock()
+        from src.agents.nodes import MemoryAnalysis, MemoryAction
+        mock_structured.invoke.return_value = MemoryAnalysis(actions=[])
+        mock_llm.with_structured_output.return_value = mock_structured
+
+        # Mock title invoke response
+        title_response_mock = MagicMock()
+        title_response_mock.content = "New Conversation Title"
+        mock_llm.invoke.return_value = title_response_mock
+
+        state = {
+            "user_id": "test_user_node",
+            "messages": [
+                HumanMessage(content="Hello", id="h1"),
+                AIMessage(content="Hi there!", id="ai1")
+            ]
+        }
+        
+        # Test frequency = 3. 
+        config = {
+            "configurable": {
+                "conversation_id": conv_id,
+                "global_memory_frequency": 3,
+                "provider": "google",
+                "model": "gemini-2.5-flash"
+            }
+        }
+
+        # 1. First invocation: counter increments to 1, trigger should not fire (mock_llm.invoke for title not called)
+        extract_memory_node(state, config)
+        
+        # Check counter value in DB
+        from src.services.memory import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT msg_count_since_update, title FROM conversations WHERE id = ?", (conv_id,))
+        row = cursor.fetchone()
+        self.assertEqual(row[0], 1)
+        self.assertNotEqual(row[1], "New Conversation Title")
+        conn.close()
+
+        # 2. Second invocation: counter increments to 2, trigger still should not fire
+        extract_memory_node(state, config)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT msg_count_since_update FROM conversations WHERE id = ?", (conv_id,))
+        self.assertEqual(cursor.fetchone()[0], 2)
+        conn.close()
+
+        # 3. Third invocation: counter increments to 3 (reaches frequency 3), trigger fires, mock_llm.invoke called for title, resets to 0
+        extract_memory_node(state, config)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT msg_count_since_update, title FROM conversations WHERE id = ?", (conv_id,))
+        row = cursor.fetchone()
+        self.assertEqual(row[0], 0) # Counter reset
+        self.assertEqual(row[1], "New Conversation Title") # Title updated
+        conn.close()
+
