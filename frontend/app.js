@@ -58,6 +58,12 @@ const activeMsgsList      = document.getElementById('active-messages-container')
 const topbarModelName    = document.getElementById('topbar-model-name');
 const featureCards       = document.getElementById('feature-cards');
 
+// Custom modal DOM refs
+const customConfirmModal = document.getElementById('custom-confirm-modal');
+const modalDiscardBtn    = document.getElementById('custom-modal-discard-btn');
+const modalCancelBtn     = document.getElementById('custom-modal-cancel-btn');
+const modalSaveBtn       = document.getElementById('custom-modal-save-btn');
+
 // ==========================================================================
 // 2. Init
 // ==========================================================================
@@ -137,22 +143,52 @@ function initListeners() {
     if (settingsUnsaved) { e.preventDefault(); e.returnValue = ''; }
   });
 
-  // Clear Chat
+  // Clear Chat (with inline confirmation to avoid native confirm dialogs)
+  let clearChatTimeout;
   clearChatBtn.addEventListener('click', async () => {
-    if (!confirm('Clear the active conversation history?')) return;
-    if (await apiClearChat()) {
-      clearChatUI();
-      showToast('Chat cleared!');
-      syncSessionData();
+    if (clearChatBtn.dataset.confirming === 'true') {
+      if (await apiClearChat()) {
+        clearChatUI();
+        showToast('Chat cleared!');
+        syncSessionData();
+      }
+      clearChatBtn.dataset.confirming = 'false';
+      clearChatBtn.innerHTML = '<i class="fa-solid fa-broom"></i> Clear Chat';
+      clearChatBtn.classList.remove('confirming');
+      clearTimeout(clearChatTimeout);
+    } else {
+      clearChatBtn.dataset.confirming = 'true';
+      clearChatBtn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Confirm?';
+      clearChatBtn.classList.add('confirming');
+      clearChatTimeout = setTimeout(() => {
+        clearChatBtn.dataset.confirming = 'false';
+        clearChatBtn.innerHTML = '<i class="fa-solid fa-broom"></i> Clear Chat';
+        clearChatBtn.classList.remove('confirming');
+      }, 3000);
     }
   });
 
-  // Clear DB
+  // Clear DB (with inline confirmation)
+  let clearDbTimeout;
   clearDbBtn.addEventListener('click', async () => {
-    if (!confirm('Delete all long-term memories?')) return;
-    if (await apiClearMemories()) {
-      showToast('Memories cleared!');
-      syncSessionData();
+    if (clearDbBtn.dataset.confirming === 'true') {
+      if (await apiClearMemories()) {
+        showToast('Memories cleared!');
+        syncSessionData();
+      }
+      clearDbBtn.dataset.confirming = 'false';
+      clearDbBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i> Clear DB';
+      clearDbBtn.classList.remove('confirming');
+      clearTimeout(clearDbTimeout);
+    } else {
+      clearDbBtn.dataset.confirming = 'true';
+      clearDbBtn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Confirm?';
+      clearDbBtn.classList.add('confirming');
+      clearDbTimeout = setTimeout(() => {
+        clearDbBtn.dataset.confirming = 'false';
+        clearDbBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i> Clear DB';
+        clearDbBtn.classList.remove('confirming');
+      }, 3000);
     }
   });
 
@@ -268,12 +304,38 @@ function clearUnsaved() {
 function switchView(view) {
   // Guard: warn if there are unsaved settings changes
   if (settingsUnsaved) {
-    const ok = confirm('You have unsaved settings changes. Leave without saving?');
-    if (!ok) return;
-    // User chose to discard — restore saved values
-    maxCharsInput.value  = activeMaxChars;
-    globalFreqInput.value = activeGlobalFreq;
-    clearUnsaved();
+    customConfirmModal.classList.add('open');
+    
+    // Set up button event handlers
+    modalDiscardBtn.onclick = () => {
+      // Restore saved values
+      maxCharsInput.value = activeMaxChars;
+      globalFreqInput.value = activeGlobalFreq;
+      clearUnsaved();
+      customConfirmModal.classList.remove('open');
+      switchView(view); // Proceed with switching
+    };
+    
+    modalCancelBtn.onclick = () => {
+      customConfirmModal.classList.remove('open');
+      // Do not switch view, return user back to settings tab/panel
+    };
+    
+    modalSaveBtn.onclick = () => {
+      const chars = parseInt(maxCharsInput.value);
+      const freq  = parseInt(globalFreqInput.value);
+      if (isNaN(chars) || chars < 200) { showToast('⚠️ Min chars limit is 200'); maxCharsInput.focus(); return; }
+      if (isNaN(freq)  || freq  < 1)   { showToast('⚠️ Min cycle is 1 message'); globalFreqInput.focus(); return; }
+      activeMaxChars   = chars;
+      activeGlobalFreq = freq;
+      saveSettings();
+      clearUnsaved();
+      customConfirmModal.classList.remove('open');
+      showToast('Settings saved!');
+      switchView(view); // Proceed with switching
+    };
+    
+    return; // Stop execution until modal choice is made
   }
 
   // Nav items
@@ -431,11 +493,25 @@ function renderGlobalMemories(mems) {
     const del = document.createElement('button');
     del.className = 'mem-del';
     del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+    del.title = 'Delete Global Memory';
+    let deleteTimeout;
     del.onclick = async () => {
-      if (confirm('Delete this global memory?') && await apiDeleteMemory(m.id)) {
-        showToast('Deleted.');
-        const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
-        if (r.ok) renderGlobalMemories(await r.json());
+      if (del.dataset.confirming === 'true') {
+        if (await apiDeleteMemory(m.id)) {
+          showToast('Deleted global memory.');
+          const r = await fetch(`${BASE_URL}/api/v1/memories/${activeSession}`);
+          if (r.ok) renderGlobalMemories(await r.json());
+        }
+        del.dataset.confirming = 'false';
+        del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        clearTimeout(deleteTimeout);
+      } else {
+        del.dataset.confirming = 'true';
+        del.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="color: var(--red); font-size: 0.72rem;"></i>';
+        deleteTimeout = setTimeout(() => {
+          del.dataset.confirming = 'false';
+          del.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        }, 3000);
       }
     };
     card.appendChild(del);
@@ -569,28 +645,40 @@ function renderConversationsList(convs) {
     title.textContent = c.title;
     item.appendChild(title);
     
-    // Delete button
+    // Delete button (with inline confirmation to bypass native confirm blocker)
     const del = document.createElement('button');
     del.className = 'conversation-delete';
     del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
     del.title = 'Delete Conversation';
+    let deleteTimeout;
     del.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`Delete conversation "${c.title}"?`)) return;
-      try {
-        const res = await fetch(`${BASE_URL}/api/v1/conversations/${activeSession}/${c.id}`, { method: 'DELETE' });
-        if (res.ok) {
-          showToast('Conversation deleted.');
-          if (activeConversationId === c.id) {
-            const remaining = convs.filter(x => x.id !== c.id);
-            activeConversationId = remaining.length ? remaining[0].id : 'default_conversation';
-            localStorage.setItem('s_conv_id', activeConversationId);
+      if (del.dataset.confirming === 'true') {
+        try {
+          const res = await fetch(`${BASE_URL}/api/v1/conversations/${activeSession}/${c.id}`, { method: 'DELETE' });
+          if (res.ok) {
+            showToast('Conversation deleted.');
+            if (activeConversationId === c.id) {
+              const remaining = convs.filter(x => x.id !== c.id);
+              activeConversationId = remaining.length ? remaining[0].id : 'default_conversation';
+              localStorage.setItem('s_conv_id', activeConversationId);
+            }
+            await loadConversations();
+            await syncSessionData();
           }
-          await loadConversations();
-          await syncSessionData();
+        } catch (err) {
+          console.error(err);
         }
-      } catch (err) {
-        console.error(err);
+        del.dataset.confirming = 'false';
+        del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
+        clearTimeout(deleteTimeout);
+      } else {
+        del.dataset.confirming = 'true';
+        del.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="color: var(--red)"></i>';
+        deleteTimeout = setTimeout(() => {
+          del.dataset.confirming = 'false';
+          del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
+        }, 3000);
       }
     };
     item.appendChild(del);
